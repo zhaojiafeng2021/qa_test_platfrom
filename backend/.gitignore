@@ -25,7 +25,6 @@ ENV/
 env/
 docs/*
 scripts/*
-migrations/versions/
 
 # IDE
 .vscode/

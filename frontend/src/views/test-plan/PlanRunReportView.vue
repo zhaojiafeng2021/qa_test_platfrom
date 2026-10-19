@@ -32,7 +32,6 @@
           </div>
           <div class="summary-meta">
             <span>执行ID: {{ planRun.id }}</span>
-            <span>环境: {{ planRun.environment_id ? `#${planRun.environment_id}` : '-' }}</span>
             <span>触发: {{ getTriggerLabel(planRun.trigger_type) }}</span>
           </div>
         </div>

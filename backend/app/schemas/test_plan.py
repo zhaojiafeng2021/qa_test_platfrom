@@ -17,8 +17,6 @@ class PlanItemInput(BaseModel):
 class TestPlanCreate(BaseModel):
     name: str = Field(min_length=1, max_length=200)
     description: Optional[str] = None
-    environment_id: Optional[int] = Field(default=None, gt=0)
-    concurrency: int = Field(default=1, ge=1, le=100)
     failure_strategy: str = Field(default="continue", pattern=r"^(continue|stop)$")
     status: str = Field(default="draft", pattern=r"^(draft|active|archived)$")
     owner_id: Optional[int] = Field(default=None, gt=0)
@@ -32,8 +30,6 @@ class TestPlanCreate(BaseModel):
 class TestPlanUpdate(BaseModel):
     name: Optional[str] = Field(default=None, min_length=1, max_length=200)
     description: Optional[str] = None
-    environment_id: Optional[int] = Field(default=None, gt=0)
-    concurrency: Optional[int] = Field(default=None, ge=1, le=100)
     failure_strategy: Optional[str] = Field(default=None, pattern=r"^(continue|stop)$")
     status: Optional[str] = Field(default=None, pattern=r"^(draft|active|archived)$")
     owner_id: Optional[int] = Field(default=None, gt=0)
@@ -45,8 +41,6 @@ class TestPlanUpdate(BaseModel):
 
 
 class PlanRunCreate(BaseModel):
-    environment_id: Optional[int] = Field(default=None, gt=0)
-    concurrency: Optional[int] = Field(default=None, ge=1, le=100)
     failure_strategy: Optional[str] = Field(default=None, pattern=r"^(continue|stop)$")
 
 
@@ -86,8 +80,6 @@ class TestPlanInfo(BaseModel):
     project_id: int
     name: str
     description: Optional[str]
-    environment_id: Optional[int]
-    concurrency: int
     failure_strategy: str
     status: str
     owner_id: Optional[int]
@@ -135,8 +127,6 @@ class PlanRunInfo(BaseModel):
     project_id: int
     trigger_type: str
     status: str
-    environment_id: Optional[int]
-    concurrency: int
     failure_strategy: str
     total_items: int
     passed_items: int

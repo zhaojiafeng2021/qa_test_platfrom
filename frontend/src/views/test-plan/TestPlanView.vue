@@ -28,11 +28,6 @@
         <el-table-column label="用例数" width="80" align="center">
           <template #default="scope">{{ scope.row.items.length }}</template>
         </el-table-column>
-        <el-table-column label="环境" min-width="120">
-          <template #default="scope">
-            <span style="font-size:12px;color:var(--txt2)">{{ environmentName(scope.row.environment_id) }}</span>
-          </template>
-        </el-table-column>
         <el-table-column label="创建人" width="90">
           <template #default="scope">
             <span style="font-size:12px;color:var(--txt3)">{{ scope.row.created_by_name || '—' }}</span>
@@ -73,14 +68,6 @@
           <div class="summary-item">
             <span class="label">通过率</span>
             <span class="value">{{ passRate(latestRun(selected.id)) }}</span>
-          </div>
-          <div class="summary-item">
-            <span class="label">测试环境</span>
-            <span class="value">{{ environmentName(selected.environment_id) }}</span>
-          </div>
-          <div class="summary-item">
-            <span class="label">并发数</span>
-            <span class="value">{{ selected.concurrency }}</span>
           </div>
           <div class="summary-item">
             <span class="label">负责人</span>
@@ -188,8 +175,6 @@
                 </el-descriptions-item>
                 <el-descriptions-item label="负责人">{{ ownerName(selected.owner_id) }}</el-descriptions-item>
                 <el-descriptions-item label="截止日期">{{ selected.due_date || '未设置' }}</el-descriptions-item>
-                <el-descriptions-item label="测试环境">{{ environmentName(selected.environment_id) }}</el-descriptions-item>
-                <el-descriptions-item label="并发数">{{ selected.concurrency }}</el-descriptions-item>
                 <el-descriptions-item label="失败策略">
                   {{ selected.failure_strategy === 'continue' ? '继续执行' : '遇错停止' }}
                 </el-descriptions-item>
@@ -215,16 +200,6 @@
             </el-select>
           </el-form-item>
           <el-form-item label="截止日期"><el-date-picker v-model="form.due_date" value-format="YYYY-MM-DD" type="date" /></el-form-item>
-        </div>
-        <div class="form-grid">
-          <el-form-item label="测试环境" required>
-            <el-select v-model="form.environment_id" placeholder="请选择默认执行环境">
-              <el-option v-for="env in activeEnvironments" :key="env.id" :label="env.display_name || env.name" :value="env.id">
-                <span>{{ env.display_name || env.name }}</span><span class="option-note">{{ env.base_url || '未配置 Base URL' }}</span>
-              </el-option>
-            </el-select>
-          </el-form-item>
-          <el-form-item label="并发数"><el-input-number v-model="form.concurrency" :min="1" :max="100" controls-position="right" /></el-form-item>
         </div>
 
         <!-- 通知规则选择 -->
@@ -296,21 +271,6 @@
     <el-dialog v-model="runVisible" title="执行测试计划" width="600px" class="plan-dialog">
       <div class="run-summary">计划：<b>{{ selected?.name }}</b> · 共 <b>{{ selected?.items.length || 0 }}</b> 个用例</div>
       <el-form label-position="top">
-        <div class="form-grid">
-          <el-form-item label="执行环境" required>
-            <el-select v-model="runForm.environment_id" placeholder="请选择执行环境">
-              <el-option v-for="env in activeEnvironments" :key="env.id" :label="env.display_name || env.name" :value="env.id" />
-            </el-select>
-          </el-form-item>
-          <el-form-item label="并发数"><el-input-number v-model="runForm.concurrency" :min="1" :max="100" :disabled="runForm.mode === 'sequential'" /></el-form-item>
-        </div>
-        <el-form-item label="执行模式">
-          <el-radio-group v-model="runForm.mode">
-            <el-radio value="sequential">顺序执行（按计划顺序）</el-radio>
-            <el-radio value="parallel" :disabled="planHasCodeCases">并发执行</el-radio>
-          </el-radio-group>
-          <div v-if="planHasCodeCases" class="mode-hint">该计划包含代码用例，仅支持顺序执行</div>
-        </el-form-item>
         <el-form-item label="失败策略">
           <el-radio-group v-model="runForm.failure_strategy"><el-radio value="continue">继续执行</el-radio><el-radio value="stop">遇错停止</el-radio></el-radio-group>
         </el-form-item>
@@ -353,7 +313,6 @@
         <div class="report-meta">
           <div><small>报告 ID</small><b>#{{ reportRun.id }}</b></div>
           <div><small>关联计划</small><b>{{ selected?.name }}</b></div>
-          <div><small>执行环境</small><b>{{ environmentName(reportRun.environment_id) }}</b></div>
           <div><small>完成时间</small><b>{{ formatTime(reportRun.finished_at || reportRun.created_at) }}</b></div>
           <div><small>执行耗时</small><b>{{ runDuration(reportRun) }}</b></div>
         </div>
@@ -400,11 +359,9 @@ import { useProjectStore } from '@/stores/project'
 import { useAuthStore } from '@/stores/auth'
 import { usePermission } from '@/composables/usePermission'
 import { codeCaseApi, codeModuleApi } from '@/api/code-case'
-import { environmentApi } from '@/api/environment'
 import { projectApi, type MemberInfo } from '@/api/project'
 import { notificationApi } from '@/api/notification'
 import * as api from '@/api/test-plan'
-import type { Environment } from '@/types/environment'
 import type { CodeCaseListItem, CodeModuleTreeNode } from '@/types/code-case'
 import { collectSubtreeIds, pruneEmptyModules } from '@/views/code-case/module-tree'
 import type { PlanRun, PlanRunItem, TestPlan } from '@/types/test-plan'
@@ -443,7 +400,6 @@ const filteredCodeCases = computed(() => {
   const idSet = new Set(ids.length ? ids : [selectedCodeModuleId.value])
   return codeCases.value.filter(c => c.module_id !== null && idSet.has(c.module_id))
 })
-const environments = ref<Environment[]>([])
 const members = ref<MemberInfo[]>([])
 const notificationRules = ref<any[]>([])  // 通知规则列表
 const filter = ref('全部')
@@ -467,21 +423,14 @@ const form = reactive({
   name: '',
   description: '',
   due_date: '',
-  environment_id: undefined as number | undefined,
   owner_id: undefined as number | undefined,
-  concurrency: 1,
   notification_channel_id: undefined as number | undefined,
   notification_template_code: undefined as string | undefined,
   notification_rule_ids: [] as number[],  // 新增：通知规则ID列表
   codeCaseIds: [] as number[]
 })
-const runForm = reactive({ environment_id: undefined as number | undefined, concurrency: 1, mode: 'sequential', failure_strategy: 'continue' })
+const runForm = reactive({ failure_strategy: 'continue' })
 const pid = computed(() => projectStore.currentProjectId)
-const activeEnvironments = computed(() => environments.value.filter(item => item.is_active))
-const planHasCodeCases = computed(() => {
-  if (!selected.value) return false
-  return selected.value.items.some(item => item.case_type === 'code')
-})
 const latestRunMap = computed(() => {
   const map = new Map<number, PlanRun>()
   for (const run of runs.value) if (!map.has(run.plan_id)) map.set(run.plan_id, run)
@@ -513,11 +462,10 @@ async function load() {
   if (!pid.value) return
   loading.value = true
   try {
-    const [planPage, codeCasePage, codeTreeData, envList, memberPage, runPage, ruleList] = await Promise.all([
+    const [planPage, codeCasePage, codeTreeData, memberPage, runPage, ruleList] = await Promise.all([
       api.listPlans(pid.value, { page_size: 100 }),
       codeCaseApi.list({ page_size: 100, project_id: pid.value }),
       codeModuleApi.getTree(pid.value),
-      environmentApi.list(pid.value),
       projectApi.listMembers(pid.value),
       api.listPlanRuns(pid.value, { page: 1, page_size: 100 }),
       notificationApi.listRules(pid.value),
@@ -525,7 +473,6 @@ async function load() {
     plans.value = planPage.items
     codeCases.value = codeCasePage.items
     codeModuleTree.value = codeTreeData
-    environments.value = envList
     members.value = memberPage.items
     runs.value = runPage.items
 
@@ -605,9 +552,7 @@ function openEditor(plan?: TestPlan, focusCases = false) {
 
   Object.assign(form, {
     name: plan?.name || '', description: plan?.description || '', due_date: plan?.due_date || '',
-    environment_id: plan?.environment_id || activeEnvironments.value[0]?.id,
     owner_id: plan?.owner_id || authStore.user?.id,
-    concurrency: plan?.concurrency || 1,
     notification_channel_id: plan?.notification_channel_id,
     notification_template_code: plan?.notification_template_code,
     notification_rule_ids: ruleIds,  // 加载通知规则IDs
@@ -624,7 +569,6 @@ function handleModuleNodeClick(data: CodeModuleTreeNode) {
 
 async function save() {
   if (!pid.value || !form.name.trim()) return ElMessage.warning('请输入计划名称')
-  if (!form.environment_id) return ElMessage.warning('请选择测试环境')
   if (!form.codeCaseIds.length) return ElMessage.warning('请至少选择一个用例')
   saving.value = true
   try {
@@ -639,7 +583,7 @@ async function save() {
 
     const data = {
       name: form.name.trim(), description: form.description || undefined, due_date: form.due_date || undefined,
-      environment_id: form.environment_id, owner_id: form.owner_id, concurrency: form.concurrency,
+      owner_id: form.owner_id,
       failure_strategy: existing?.failure_strategy || 'continue', status: existing?.status || 'active',
       notification_channel_id: form.notification_channel_id,
       notification_template_code: form.notification_template_code,
@@ -661,7 +605,6 @@ async function removeCase(caseId: number) {
   await ElMessageBox.confirm('确定从该计划移除此用例吗？历史运行结果不会被删除。', '移除用例', { type: 'warning' })
   const plan = selected.value
   await api.updatePlan(pid.value, plan.id, {
-    environment_id: plan.environment_id || undefined,
     items: plan.items.filter(item => item.case_id !== caseId).map((item, index) => ({
       case_id: item.case_id,
       case_version: item.case_version,
@@ -704,22 +647,15 @@ async function handleSyncVersions() {
 
 function openRunDialog() {
   if (!selected.value) return
-  runForm.environment_id = selected.value.environment_id || activeEnvironments.value[0]?.id
-  runForm.concurrency = selected.value.concurrency
-  // 含代码用例的计划仅支持顺序执行（代码用例执行引擎按顺序处理）
-  runForm.mode = planHasCodeCases.value ? 'sequential' : (selected.value.concurrency > 1 ? 'parallel' : 'sequential')
   runForm.failure_strategy = selected.value.failure_strategy
   runVisible.value = true
 }
 
 async function execute() {
   if (!pid.value || !selected.value) return
-  if (!runForm.environment_id) return ElMessage.warning('请选择执行环境')
   executing.value = true
   try {
     const run = await api.runPlan(pid.value, selected.value.id, {
-      environment_id: runForm.environment_id,
-      concurrency: runForm.mode === 'sequential' ? 1 : runForm.concurrency,
       failure_strategy: runForm.failure_strategy,
     })
     runs.value = [run, ...runs.value.filter(item => item.id !== run.id)]
@@ -800,7 +736,6 @@ function rerunFromReport() { reportVisible.value = false; openRunDialog() }
 function codeCaseInfo(id: number) { return codeCases.value.find(item => item.id === id) }
 function ownerName(id?: number | null) { if (!id) return '未指定'; const member = members.value.find(item => item.user_id === id); return member?.full_name || member?.username || `用户 #${id}` }
 function memberLabel(member: MemberInfo) { const name = member.full_name || member.username || `用户 #${member.user_id}`; return member.user_id === authStore.user?.id ? `${name}（我）` : name }
-function environmentName(id?: number | null) { if (!id) return '未指定'; const env = environments.value.find(item => item.id === id); return env?.display_name || env?.name || `环境 #${id}` }
 function dueText(value?: string | null) { return value ? `截止 ${value.slice(5)}` : '未设置截止日期' }
 function planStatusText(planId: number) { const status = latestRun(planId)?.status; return status ? runStatusText(status) : '未开始' }
 function runStatusText(status?: string) { return ({ pending: '排队中', running: '执行中', passed: '通过', failed: '失败', error: '异常', cancelled: '已取消', timeout: '超时' } as Record<string, string>)[status || ''] || '未运行' }

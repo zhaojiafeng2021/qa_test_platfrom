@@ -18,8 +18,6 @@ export interface TestPlan {
   project_id: number
   name: string
   description?: string | null
-  environment_id?: number | null
-  concurrency: number
   failure_strategy: 'continue' | 'stop'
   status: 'draft' | 'active' | 'archived'
   owner_id?: number | null
@@ -70,8 +68,6 @@ export interface PlanRun {
   project_id: number
   trigger_type: string
   status: string
-  environment_id?: number | null
-  concurrency: number
   failure_strategy: string
   total_items: number
   passed_items: number
@@ -103,8 +99,6 @@ export interface Schedule {
 export interface PlanPayload {
   name: string
   description?: string
-  environment_id?: number
-  concurrency: number
   failure_strategy: string
   status: string
   owner_id?: number

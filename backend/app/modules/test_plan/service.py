@@ -11,7 +11,6 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.errors import ResourceNotFoundError, ValidationError
 from app.db.models.test_plan import PlanRun, PlanRunItem, Schedule, TestPlan
-from app.modules.environment.repository import EnvironmentRepository, VariableRepository
 from app.modules.test_plan.repository import ScheduleRepository, TestPlanRepository
 from app.schemas.test_plan import (
     PlanRunCreate,
@@ -70,14 +69,6 @@ class TestPlanService:
         self.db = db
         self.repo = TestPlanRepository(db)
 
-    async def _validate_environment(self, project_id: int, environment_id: int | None):
-        if environment_id is None:
-            return None
-        environment = await EnvironmentRepository.get_by_id(self.db, environment_id)
-        if not environment or environment.project_id != project_id:
-            raise ValidationError("Environment does not belong to this project")
-        return environment
-
     async def _validate_notification_channel(self, project_id: int, channel_id: int | None):
         """验证通知渠道是否属于当前项目"""
         if channel_id is None:
@@ -105,7 +96,6 @@ class TestPlanService:
         return info
 
     async def create(self, project_id: int, data: TestPlanCreate, user_id: int) -> TestPlanInfo:
-        await self._validate_environment(project_id, data.environment_id)
         await self._validate_notification_channel(project_id, data.notification_channel_id)
         items = await self._normalize_items(project_id, data.items)
         plan = TestPlan(
@@ -161,8 +151,6 @@ class TestPlanService:
         if not plan or plan.project_id != project_id:
             raise ResourceNotFoundError("Test plan not found")
         values = data.model_dump(exclude_unset=True, exclude={"items"})
-        if "environment_id" in values:
-            await self._validate_environment(project_id, values["environment_id"])
         if "notification_channel_id" in values:
             await self._validate_notification_channel(project_id, values["notification_channel_id"])
         for name, value in values.items():
@@ -203,10 +191,6 @@ class TestPlanService:
                 await dispatch_mixed_plan_run(self.db, existing.id)
                 return await self.get_run(project_id, existing.id), False
 
-        environment_id = data.environment_id if data.environment_id is not None else plan.environment_id
-        if environment_id is None:
-            raise ValidationError("Execution environment is required")
-        environment = await self._validate_environment(project_id, environment_id)
         items = [item for item in await self.repo.list_items(plan_id) if item.enabled]
         if not items:
             raise ValidationError("Test plan has no enabled automation cases")
@@ -216,8 +200,6 @@ class TestPlanService:
             plan_id=plan_id,
             trigger_type=trigger_type,
             trigger_by=user_id,
-            environment_id=environment_id,
-            concurrency=data.concurrency or plan.concurrency,
             failure_strategy=data.failure_strategy or plan.failure_strategy,
             idempotency_key=normalized_key,
             total_items=len(items),
@@ -226,9 +208,6 @@ class TestPlanService:
         )
         self.db.add(run)
         await self.db.flush()
-
-        project_variables = await VariableRepository.get_by_project(self.db, project_id)
-        base_url = environment.base_url if environment and environment.base_url else None
 
         for item in items:
             case_type = getattr(item, "case_type", "manual")

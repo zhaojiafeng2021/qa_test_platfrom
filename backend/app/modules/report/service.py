@@ -14,7 +14,6 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.core.errors import ResourceNotFoundError, ValidationError
 from app.core.minio_client import get_minio_client
 from app.db.models.code_case import CodeTestCase, CodeCaseExecution
-from app.db.models.environment import Environment as EnvironmentModel
 from app.db.models.project import Project
 from app.db.models.test_plan import PlanRun, PlanRunItem, TestPlan
 from app.modules.report.repository import (
@@ -306,14 +305,6 @@ class ReportService:
         )
         project_name = proj_result.scalar_one_or_none()
 
-        # 关联查询：环境名称
-        environment_name = None
-        if plan_run.environment_id:
-            env_result = await self.db.execute(
-                select(EnvironmentModel.display_name).where(EnvironmentModel.id == plan_run.environment_id)
-            )
-            environment_name = env_result.scalar_one_or_none()
-
         # 批量关联查询：用例名称+等级（CodeTestCase）
         case_ids = list({item.case_id for item in plan_run_items})
         case_map: dict[int, CodeTestCase] = {}
@@ -358,11 +349,8 @@ class ReportService:
                 "plan_name": plan_name,
                 "project_id": plan_run.project_id,
                 "project_name": project_name,
-                "environment_id": plan_run.environment_id,
-                "environment_name": environment_name,
                 "status": plan_run.status,
                 "trigger_type": plan_run.trigger_type,
-                "concurrency": plan_run.concurrency,
                 "failure_strategy": plan_run.failure_strategy,
                 "total_items": plan_run.total_items,
                 "passed_items": plan_run.passed_items,
@@ -533,7 +521,6 @@ class NotificationService:
         lines = [
             f"**测试计划**: {run.get('plan_name')}",
             f"**项目**: {run.get('project_name')}",
-            f"**环境**: {run.get('environment_name') or '-'}",
             f"**状态**: {status}",
             f"**用例统计**: 通过 {run.get('passed_items')} / 失败 {run.get('failed_items')} / 总计 {run.get('total_items')}",
             f"**通过率**: {pass_rate:.1f}%",
