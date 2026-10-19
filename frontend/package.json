@@ -1,0 +1,49 @@
+{
+  "name": "qa-platform-web",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "apollo:env": "node scripts/load-apollo-env.mjs",
+    "dev": "node scripts/load-apollo-env.mjs && vite",
+    "build": "node scripts/load-apollo-env.mjs && vite build",
+    "build:check": "node scripts/load-apollo-env.mjs && vue-tsc && vite build",
+    "preview": "vite preview",
+    "typecheck": "vue-tsc --noEmit",
+    "lint": "eslint . --ext .vue,.js,.jsx,.cjs,.mjs,.ts,.tsx,.cts,.mts --fix --ignore-path .gitignore",
+    "format": "prettier --write src/",
+    "test": "vitest",
+    "test:e2e": "playwright test"
+  },
+  "dependencies": {
+    "@antv/x6": "^2.18.0",
+    "@element-plus/icons-vue": "^2.3.0",
+    "axios": "^1.7.0",
+    "dayjs": "^1.11.0",
+    "echarts": "^5.5.0",
+    "element-plus": "^2.9.0",
+    "monaco-editor": "^0.50.0",
+    "pinia": "^2.2.0",
+    "vue": "^3.5.11",
+    "vue-router": "^4.6.4",
+    "xlsx": "^0.18.5"
+  },
+  "devDependencies": {
+    "@playwright/test": "^1.47.0",
+    "@typescript-eslint/eslint-plugin": "^8.0.0",
+    "@typescript-eslint/parser": "^8.0.0",
+    "@vitejs/plugin-vue": "^5.1.0",
+    "@vue/test-utils": "^2.4.0",
+    "@vue/tsconfig": "^0.5.0",
+    "eslint": "^9.0.0",
+    "eslint-plugin-vue": "^9.28.0",
+    "prettier": "^3.3.0",
+    "typescript": "~5.6.0",
+    "unplugin-auto-import": "^0.18.0",
+    "unplugin-vue-components": "^0.27.5",
+    "vite": "^5.4.0",
+    "vitest": "^2.1.9",
+    "vue-tsc": "^2.1.10"
+  },
+  "packageManager": "pnpm@11.21.0+sha512.521705bce689924eac72f5a3587122f362689ef6571e55ba80076fd637c11132ecffada26fad4ea79c485bfddbfd3d5a2a5b05805a77e893de71ec8a6cca3bb1"
+}

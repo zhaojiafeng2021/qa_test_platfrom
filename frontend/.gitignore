@@ -1,0 +1,42 @@
+# Logs
+logs
+*.log
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+pnpm-debug.log*
+lerna-debug.log*
+
+node_modules
+.DS_Store
+dist
+dist-ssr
+coverage
+*.local
+
+# Editor directories and files
+.vscode/*
+!.vscode/extensions.json
+.idea
+*.suo
+*.ntvs*
+*.njsproj
+*.sln
+*.sw?
+
+# 环境变量
+.env
+.env.local
+.env.*.local
+
+
+# 类型定义
+src/types/auto-imports.d.ts
+src/types/components.d.ts
+/BUGFIX_URL_DIRECT_ACCESS.md
+/PERFORMANCE_OPTIMIZATION.md
+/PERMISSION_CONTROL_GUIDE.md
+/artifacts/perf_launch/05_api_env_selected.png
+
+# 修复记录
+/*FIX.md

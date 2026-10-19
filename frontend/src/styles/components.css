@@ -1,0 +1,42 @@
+/* ============================================================
+   通用组件类 - 从原型图抽取的可复用样式
+   与 prototype_hifi.html 保持一致，供各页面直接使用
+   ============================================================ */
+
+/* --- 按钮 --- */
+.btn { padding: 7px 14px; border-radius: var(--r); font-weight: 500; transition: all .15s; border: none; cursor: pointer; font-size: 13px; }
+.btn-primary { background: var(--primary); color: #fff; }
+.btn-primary:hover { background: var(--primary-d); }
+.btn-ghost { background: none; color: var(--txt2); border: 1px solid var(--line); }
+.btn-ghost:hover { background: var(--line2); color: var(--txt); }
+
+/* --- HTTP 方法标签 --- */
+.method { font-size: 11px; padding: 2px 7px; border-radius: 5px; font-weight: 700; font-family: Consolas, monospace; }
+.m-get { background: #D1FAE5; color: #059669; }
+.m-post { background: #EBF2FF; color: var(--primary); }
+.m-put { background: #FEF3C7; color: #D97706; }
+.m-del, .m-delete { background: #FEE2E2; color: #DC2626; }
+.m-patch { background: #EDE9FE; color: #7C3AED; }
+
+/* --- 优先级标签 --- */
+.pri { display: inline-block; font-size: 10px; padding: 2px 7px; border-radius: 5px; font-weight: 700; }
+.pri-p0 { background: #FEE2E2; color: #DC2626; }
+.pri-p1 { background: #FEF3C7; color: #D97706; }
+.pri-p2 { background: #EBF2FF; color: var(--primary); }
+.pri-p3 { background: var(--skip-bg); color: var(--skip); }
+
+/* --- 状态点标签 --- */
+.status-dot { display: inline-flex; align-items: center; gap: 5px; font-size: 12px; padding: 2px 9px; border-radius: 10px; font-weight: 600; }
+.st-pass { background: var(--success-bg); color: var(--success); }
+.st-fail { background: var(--err-bg); color: var(--err); }
+.st-skip { background: var(--skip-bg); color: var(--skip); }
+.st-run { background: var(--primary-bg); color: var(--primary); }
+.st-warn { background: var(--warn-bg); color: var(--warn); }
+
+/* --- 卡片 --- */
+.card { background: var(--card); border-radius: var(--r2); padding: 20px; box-shadow: var(--shadow); border: 1px solid var(--line); }
+
+/* --- 页头 --- */
+.page-head { display: flex; align-items: center; justify-content: space-between; margin-bottom: 20px; }
+.page-head h1 { font-size: 20px; font-weight: 700; color: var(--txt); display: flex; align-items: center; gap: 8px; }
+.page-head .actions { display: flex; align-items: center; gap: 8px; }

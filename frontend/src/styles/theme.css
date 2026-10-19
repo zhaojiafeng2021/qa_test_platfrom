@@ -1,0 +1,86 @@
+/* ============================================================
+   设计系统 - 与原型图 prototype_hifi.html 的 :root 完全对齐
+   这是全站唯一的设计 token 来源，所有页面必须引用这些变量
+   ============================================================ */
+:root {
+  /* 背景 / 卡片 / 侧边栏 */
+  --bg: #F0F4FA;
+  --card: #FFFFFF;
+  --sidebar: #0F1929;
+  --sidebar-w: 220px;
+  --sidebar-w-col: 56px;
+
+  /* 主色 */
+  --primary: #3B7BF5;
+  --primary-d: #2563EB;
+  --primary-bg: #EBF2FF;
+
+  /* 语义色 */
+  --success: #10B981;
+  --success-bg: #D1FAE5;
+  --warn: #F59E0B;
+  --warn-bg: #FEF3C7;
+  --err: #EF4444;
+  --err-bg: #FEE2E2;
+  --info: #8B5CF6;
+  --info-bg: #EDE9FE;
+  --skip: #94A3B8;
+  --skip-bg: #F1F5F9;
+
+  /* 文字 */
+  --txt: #1E293B;
+  --txt2: #64748B;
+  --txt3: #94A3B8;
+
+  /* 分隔线 */
+  --line: #E2E8F0;
+  --line2: #F1F5F9;
+
+  /* 阴影 */
+  --shadow: 0 1px 4px rgba(15, 25, 41, .06), 0 4px 16px rgba(59, 123, 245, .07);
+  --shadow2: 0 8px 32px rgba(59, 123, 245, .13);
+
+  /* 圆角 / 高度 */
+  --r: 8px;
+  --r2: 12px;
+  --r3: 16px;
+  --top-h: 56px;
+}
+
+/* ============================================================
+   Element Plus 主题覆盖 - 让 EP 组件用我们的设计 token
+   ============================================================ */
+:root {
+  --el-color-primary: #3B7BF5;
+  --el-color-primary-light-3: #6B9BF8;
+  --el-color-primary-light-5: #9DBDFB;
+  --el-color-primary-light-7: #C4D8FD;
+  --el-color-primary-light-8: #D9E6FE;
+  --el-color-primary-light-9: #EBF2FF;
+  --el-color-primary-dark-2: #2563EB;
+
+  --el-color-success: #10B981;
+  --el-color-warning: #F59E0B;
+  --el-color-danger: #EF4444;
+  --el-color-error: #EF4444;
+  --el-color-info: #8B5CF6;
+
+  --el-text-color-primary: #1E293B;
+  --el-text-color-regular: #64748B;
+  --el-text-color-secondary: #94A3B8;
+
+  --el-border-color: #E2E8F0;
+  --el-border-color-light: #F1F5F9;
+  --el-border-radius-base: 8px;
+
+  --el-fill-color-blank: #FFFFFF;
+  --el-bg-color: #FFFFFF;
+
+  --el-font-size-base: 13px;
+}
+
+/* 按钮圆角与原型一致 */
+.el-button {
+  border-radius: var(--r);
+  font-weight: 500;
+}

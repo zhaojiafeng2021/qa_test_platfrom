@@ -1,0 +1,38 @@
+# ===== 环境与密钥 =====
+.env
+*.env
+!.env.example
+backend/.env
+
+# ===== Python =====
+__pycache__/
+*.py[cod]
+*.egg-info/
+.pytest_cache/
+.mypy_cache/
+backend/venv/
+venv/
+
+# ===== Node / 前端 =====
+frontend/node_modules/
+frontend/dist/
+frontend/.vite/
+node_modules/
+dist/
+*.local
+
+# ===== 日志与运行时产物 =====
+logs/
+*.log
+backend/backend.log
+backend/backend.err.log
+
+# ===== 代码用例仓库（独立仓库，不纳入平台仓库） =====
+code_testcase_warehouse/
+code_testcases/
+
+# ===== IDE / 系统 =====
+.idea/
+.vscode/
+.DS_Store
+Thumbs.db
