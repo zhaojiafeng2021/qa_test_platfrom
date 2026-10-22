@@ -167,6 +167,7 @@ const navGroups = [
     label: '测试执行',
     items: [
       { key: 'test-plans', label: '测试计划', emoji: '🎯', icon: markRaw(Calendar) },
+      { key: 'coverage', label: '代码覆盖率', emoji: '📊', icon: markRaw(DataAnalysis) },
     ],
   },
   {
@@ -212,6 +213,7 @@ const projectInitial = computed(() => currentProject.value?.name?.charAt(0) || '
 const projectMarkStyle = computed(() => ({ background: currentProject.value?.color || '#0EA5E9' }))
 const activeMenu = computed(() => {
   const segments = route.path.split('/')
+  if (segments[2] === 'coverage') return 'coverage'
   return String(segments[segments.length - 1] || 'dashboard')
 })
 

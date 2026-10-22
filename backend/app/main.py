@@ -270,12 +270,15 @@ async def root():
 from app.api.v1 import (
     auth,
     code_case,
+    code_repository,
+    coverage_java,
     environment,
     notifications,
     permissions,
     projects,
     report,
     test_plan,
+    ws_coverage,
 )
 
 app.include_router(auth.router, prefix=settings.api_prefix)
@@ -286,6 +289,10 @@ app.include_router(report.router, prefix=settings.api_prefix)
 app.include_router(code_case.router, prefix=settings.api_prefix)
 app.include_router(permissions.router, prefix=settings.api_prefix)
 app.include_router(notifications.router, prefix=settings.api_prefix)
+app.include_router(coverage_java.router, prefix=settings.api_prefix)
+app.include_router(code_repository.router, prefix=settings.api_prefix)
+# WebSocket 路由：不加 api_prefix，路径直接 /ws/...
+app.include_router(ws_coverage.router)
 
 
 # 挂载前端静态文件（生产环境）

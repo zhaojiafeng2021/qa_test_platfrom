@@ -52,6 +52,11 @@ http.interceptors.response.use(
     }
   },
   (error) => {
+    // 调用方传 { silent: true } 时自行展示错误（401 跳转仍保留）
+    const silent = (error.config as { silent?: boolean } | undefined)?.silent
+    if (silent && error.response?.status !== 401) {
+      return Promise.reject(error)
+    }
     if (error.response) {
       const { status, data } = error.response
 
