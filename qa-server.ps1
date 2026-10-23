@@ -3,9 +3,10 @@
     代码用例测试平台 一键启动/停止/状态检查脚本
 
 .DESCRIPTION
-    管理 6 个服务: MySQL / Redis / FastAPI 后端 / Vite 前端 / arq 主 Worker / arq 代码用例 Worker
+    管理服务: MySQL / Redis / MinIO / FastAPI 后端 / Vite 前端 / arq 主 Worker / arq 代码用例 Worker /
+             arq 覆盖率 Worker / demo-webapp (JaCoCo tcpserver 演示应用)
     所有长驻服务用 Start-Process 后台启动,日志写到 logs\ 目录,不绑定当前终端。
-    由原平台 qa-server.ps1 移植,端口与服务清单对齐本平台 (MySQL 3306 / 后端 8100 / 前端 5273)。
+    端口在下方"端口配置"中统一修改 (默认 MySQL 3306 / Redis 6379 / MinIO 9000 / 后端 8000 / 前端 5274)。
 
 .PARAMETER Action
     start     - 启动所有未运行的服务(已运行的跳过)
@@ -38,7 +39,21 @@ $VenvPython    = Join-Path $BackendDir 'venv\Scripts\python.exe'
 $RedisExe      = 'C:\Users\gg.zhao\redis\Redis-7.4.2-Windows-x64-msys2\redis-server.exe'
 $MysqlExe      = 'C:\Program Files\MySQL\MySQL Server 8.4\bin\mysqld.exe'
 $MysqlDataDir  = 'C:\ProgramData\MySQL\MySQL Server 8.4\data'
+$ToolsDir      = 'C:\Users\gg.zhao\tools'
+$MinioExe      = Join-Path $ToolsDir 'minio\minio.exe'
+$MinioDataDir  = Join-Path $ToolsDir 'minio-data'
+$JacocoAgent   = Join-Path $ToolsDir 'jacoco\jacocoagent.jar'
+$DemoAppDir    = Join-Path $ToolsDir 'deployments\demo-webapp\demo-webapp'
+$DemoDeployPs1 = Join-Path $ToolsDir 'test_java_project\demo-webapp\deploy.ps1'
 $LogDir        = Join-Path $ProjectRoot 'logs'
+
+# ============ 端口配置 ============
+$BackendPort   = 8000
+$FrontendPort  = 5274
+$MinioPort     = 9000
+$MinioConsole  = 9001
+$DemoAppPort   = 18080
+$DemoAgentPort = 6300
 $PidFile       = Join-Path $LogDir '.uvicorn.pid'
 if (-not (Test-Path $LogDir)) { New-Item -ItemType Directory -Path $LogDir -Force | Out-Null }
 
@@ -46,13 +61,25 @@ if (-not (Test-Path $LogDir)) { New-Item -ItemType Directory -Path $LogDir -Forc
 $Services = @(
     @{ Name='MySQL';               Port=3306; Type='mysql';   Log='mysql.log' },
     @{ Name='Redis';               Port=6379; Type='process'; Exe=$RedisExe; Args=@('--port','6379','--bind','127.0.0.1'); Log='redis.log' },
-    @{ Name='FastAPI 后端';         Port=8100; Type='python';
-       Cmd='uvicorn app.main:app --host 0.0.0.0 --port 8100';
-       DevCmd='uvicorn app.main:app --host 0.0.0.0 --port 8100 --reload';
+    @{ Name='MinIO';               Port=$MinioPort; Type='shell';
+       Cmd="`$env:MINIO_ROOT_USER='minioadmin'; `$env:MINIO_ROOT_PASSWORD='minioadmin'; & '$MinioExe' server '$MinioDataDir' --address :$MinioPort --console-address :$MinioConsole";
+       Check=$MinioExe; WorkDir=$ToolsDir; Log='minio.log' },
+    @{ Name='FastAPI 后端';         Port=$BackendPort; Type='python';
+       Cmd="uvicorn app.main:app --host 0.0.0.0 --port $BackendPort";
+       DevCmd="uvicorn app.main:app --host 0.0.0.0 --port $BackendPort --reload";
        WorkDir=$BackendDir; Log='FastAPI_backend.log' },
-    @{ Name='Vite 前端';            Port=5273; Type='node';    Cmd='node node_modules/vite/bin/vite.js'; PreCmd='node scripts/load-apollo-env.mjs'; WorkDir=$FrontendDir; Log='Vite_frontend.log' },
+    @{ Name='Vite 前端';            Port=$FrontendPort; Type='node';
+       Cmd="`$env:VITE_PROXY_TARGET='http://localhost:$BackendPort'; node node_modules/vite/bin/vite.js --port $FrontendPort --strictPort";
+       PreCmd='node scripts/load-apollo-env.mjs'; WorkDir=$FrontendDir; Log='Vite_frontend.log' },
     @{ Name='arq 主 Worker';        Port=0;    Type='arq';     Module='app.workers.settings.WorkerSettings'; WorkDir=$BackendDir; Log='arq_main_worker.log' },
-    @{ Name='arq CodeCase Worker';  Port=0;    Type='arq';     Module='app.workers.settings.CodeCaseWorkerSettings'; WorkDir=$BackendDir; Log='arq_codecase_worker.log' }
+    @{ Name='arq CodeCase Worker';  Port=0;    Type='arq';     Module='app.workers.settings.CodeCaseWorkerSettings'; WorkDir=$BackendDir; Log='arq_codecase_worker.log' },
+    @{ Name='arq 覆盖率 Worker';    Port=0;    Type='arq';     Module='app.workers.settings.CoverageJavaWorkerSettings'; WorkDir=$BackendDir; Log='arq_coverage_worker.log' },
+    @{ Name='demo-webapp';          Port=$DemoAppPort; Type='shell';
+       # 已编译则直接带 JaCoCo tcpserver agent 启动; 未编译请先运行 deploy.ps1 (git 拉取 + mvn compile)
+       Cmd="& java '-javaagent:$JacocoAgent=output=tcpserver,address=*,port=$DemoAgentPort' -cp '$DemoAppDir\target\classes' com.example.demo.App";
+       Env=@{ APP_PORT="$DemoAppPort" };
+       Check="$DemoAppDir\target\classes"; CheckHint="请先执行: & '$DemoDeployPs1'";
+       WorkDir=$DemoAppDir; Log='demo_webapp.log' }
 )
 
 # ============ 工具函数 ============
@@ -129,10 +156,10 @@ function Stop-ServiceByName($svc) {
             else { Write-Warn "$($svc.Name) 未运行" }
             if (Test-Path $PidFile) { Remove-Item $PidFile -Force -ErrorAction SilentlyContinue }
         }
-        'node' {
+        { $_ -in 'node','shell' } {
             $conn = Get-PortListening $svc.Port
             if ($conn) {
-                Stop-Process -Id $conn.OwningProcess -Force -ErrorAction SilentlyContinue
+                & taskkill /F /T /PID $conn.OwningProcess 2>&1 | Out-Null
                 Write-Ok "$($svc.Name) 已停止 (PID $($conn.OwningProcess))"
             }
         }
@@ -151,16 +178,8 @@ function Start-ServiceByName($svc, [switch]$ForegroundBackend) {
     if ($svc.Port -gt 0) {
         $conn = Get-PortListening $svc.Port
         if ($conn) {
-            $listenPid = $conn.OwningProcess
-            # 先尝试清理 (taskkill 内核级, 不依赖 Get-Process 枚举)
-            & taskkill /F /T /PID $listenPid 2>&1 | Out-Null
-            Start-Sleep -Seconds 1
-            $still = Get-PortListening $svc.Port
-            if ($still) {
-                Write-Warn "$($svc.Name) 端口被 PID $listenPid 占用, 清理不掉 (幽灵 PID), 跳过启动"
-                return
-            }
-            Write-Info "$($svc.Name) 清理残留 PID $listenPid 后重启..."
+            Write-Warn "$($svc.Name) 端口 $($svc.Port) 已被 PID $($conn.OwningProcess) 监听, 视为已运行, 跳过 (需重启请用 restart)"
+            return
         }
     } elseif ($svc.Type -eq 'arq') {
         $running = Get-ArqProcesses $svc.Module
@@ -223,6 +242,18 @@ function Start-ServiceByName($svc, [switch]$ForegroundBackend) {
             Start-Process -FilePath 'powershell.exe' -ArgumentList '-NoProfile','-Command',$cmd -WorkingDirectory $svc.WorkDir -WindowStyle Minimized -RedirectStandardOutput $logFile -RedirectStandardError "$logFile.err"
             Write-Ok "$($svc.Name) 启动中... 日志: $logFile"
         }
+        'shell' {
+            if ($svc.Check -and -not (Test-Path $svc.Check)) {
+                Write-Err "$($svc.Name) 依赖不存在: $($svc.Check)"
+                if ($svc.CheckHint) { Write-Info $svc.CheckHint }
+                return
+            }
+            $envPrefix = ''
+            if ($svc.Env) { foreach ($k in $svc.Env.Keys) { $envPrefix += "`$env:$k='$($svc.Env[$k])'; " } }
+            $cmd = "$envPrefix$($svc.Cmd)"
+            Start-Process -FilePath 'powershell.exe' -ArgumentList '-NoProfile','-Command',$cmd -WorkingDirectory $svc.WorkDir -WindowStyle Minimized -RedirectStandardOutput $logFile -RedirectStandardError "$logFile.err"
+            Write-Ok "$($svc.Name) 启动中... 日志: $logFile"
+        }
         'arq' {
             $cmd = "`$env:PYTHONUTF8=1; & '$VenvPython' -m arq $($svc.Module)"
             Start-Process -FilePath 'powershell.exe' -ArgumentList '-NoProfile','-Command',$cmd -WorkingDirectory $svc.WorkDir -WindowStyle Minimized -RedirectStandardOutput $logFile -RedirectStandardError "$logFile.err"
@@ -265,25 +296,35 @@ function Show-Status {
     else { Write-Err "Redis 端口 6379 不可达" }
 
     try {
-        $resp = Invoke-WebRequest 'http://127.0.0.1:8100/health/live' -UseBasicParsing -TimeoutSec 5
+        $resp = Invoke-WebRequest "http://127.0.0.1:$BackendPort/health/live" -UseBasicParsing -TimeoutSec 5
         Write-Ok "后端存活 (/health/live) -> HTTP $($resp.StatusCode)"
     } catch {
         Write-Err "后端存活检查失败: $($_.Exception.Message)"
     }
 
     try {
-        $resp = Invoke-WebRequest 'http://127.0.0.1:8100/health/ready' -UseBasicParsing -TimeoutSec 10
+        $resp = Invoke-WebRequest "http://127.0.0.1:$BackendPort/health/ready" -UseBasicParsing -TimeoutSec 10
         Write-Ok "后端就绪 (/health/ready) -> $($resp.Content)"
     } catch {
         Write-Warn "后端就绪检查超时或失败(依赖 MySQL/Redis,可能未完全启动): $($_.Exception.Message)"
     }
 
     try {
-        $resp = Invoke-WebRequest 'http://127.0.0.1:5273/' -UseBasicParsing -TimeoutSec 5
+        $resp = Invoke-WebRequest "http://127.0.0.1:$FrontendPort/" -UseBasicParsing -TimeoutSec 5
         Write-Ok "前端 HTTP $($resp.StatusCode)"
     } catch {
         Write-Err "前端访问失败: $($_.Exception.Message)"
     }
+
+    try {
+        $resp = Invoke-WebRequest "http://127.0.0.1:$MinioPort/minio/health/live" -UseBasicParsing -TimeoutSec 5
+        Write-Ok "MinIO 存活 -> HTTP $($resp.StatusCode)"
+    } catch {
+        Write-Err "MinIO 存活检查失败 (覆盖率产物上传依赖它): $($_.Exception.Message)"
+    }
+
+    if (Get-PortListening $DemoAgentPort) { Write-Ok "demo-webapp JaCoCo agent 端口 $DemoAgentPort 可达" }
+    else { Write-Warn "demo-webapp JaCoCo agent 端口 $DemoAgentPort 不可达 (runtime 采集会失败)" }
 
     Write-Info "arq 队列状态详见后端 /health/ready 返回中的 redis/database 字段"
     Write-Info "日志目录: $LogDir"
@@ -295,14 +336,16 @@ function Show-Status {
 
 function Show-AccessUrls {
     Write-Host "访问地址:" -ForegroundColor Cyan
-    Write-Host "  本机:   http://localhost:5273/"
+    Write-Host "  平台:        http://localhost:$FrontendPort/"
+    Write-Host "  MinIO 控制台: http://localhost:$MinioConsole/ (minioadmin/minioadmin)"
+    Write-Host "  demo-webapp: http://localhost:$DemoAppPort/  (JaCoCo agent: localhost:$DemoAgentPort)"
     $lanIp = $null
     try {
         $lanIp = (Get-NetIPAddress -AddressFamily IPv4 -ErrorAction Stop |
             Where-Object { $_.IPAddress -ne '127.0.0.1' -and $_.IPAddress -notlike '169.254.*' -and $_.PrefixOrigin -in @('Dhcp','Manual') } |
             Select-Object -First 1).IPAddress
     } catch { $lanIp = $null }
-    if ($lanIp) { Write-Host "  局域网: http://${lanIp}:5273/" }
+    if ($lanIp) { Write-Host "  局域网:      http://${lanIp}:$FrontendPort/" }
 }
 
 function Start-All {

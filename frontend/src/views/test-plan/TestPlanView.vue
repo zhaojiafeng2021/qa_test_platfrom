@@ -154,7 +154,7 @@
                       link
                       type="danger"
                       size="small"
-                      @click.stop="handleCancelRun(scope.row)"
+                      @click.stop="handleCancelRun(scope.row as PlanRun)"
                     >
                       停止
                     </el-button>

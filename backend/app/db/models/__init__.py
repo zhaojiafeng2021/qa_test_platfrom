@@ -12,6 +12,15 @@ from app.db.models.test_plan import TestPlan, PlanItem, Schedule, PlanRun, PlanR
 from app.db.models.report import NotificationLog, NotificationRule, ReportFile
 from app.db.models.system_config import SystemConfig
 from app.db.models.code_case import CodeCaseModule, CodeTestCase, CodeCaseExecution
+from app.db.models.coverage_java import (
+    CoverageLedger,
+    CoverageLedgerEvent,
+    CoverageLedgerFile,
+    CoverageTask,
+    JavaCoverageReport,
+    JavaCoverageRun,
+)
+from app.db.models.code_repository import CodeRepository
 
 __all__ = [
     "Base",
@@ -41,4 +50,11 @@ __all__ = [
     "CodeCaseModule",
     "CodeTestCase",
     "CodeCaseExecution",
+    "CoverageTask",
+    "JavaCoverageRun",
+    "JavaCoverageReport",
+    "CoverageLedger",
+    "CoverageLedgerFile",
+    "CoverageLedgerEvent",
+    "CodeRepository",
 ]

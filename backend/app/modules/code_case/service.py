@@ -312,7 +312,8 @@ class CodeCaseScanService:
         self.case_repo = CodeTestCaseRepository(db)
         self.module_svc = CodeCaseModuleService(db)
 
-    async def scan(self, user_id: Optional[int] = None) -> ScanResult:
+    async def scan(self, user_id: Optional[int] = None,
+                   project_id: Optional[int] = None) -> ScanResult:
         """
         扫描 code_testcases 目录并同步：
         - 新用例入库，模块层级不存在则自动逐级新增
@@ -321,7 +322,18 @@ class CodeCaseScanService:
         - 项目归属完全由 @case(project="项目名") 决定，扫描器自动查库解析；
           找不到匹配项目名则 project_id 留 NULL（全局可见）
         - 已有记录的 project_id 若因 @case 修改而变化，会自动更新
+
+        project_id 有值时只同步该项目：
+        - 只处理 @case(project=) 解析到该项目的用例，以及库里原本属于该项目的用例
+          （后者 @case 改成别的项目时会随之迁出）
+        - 其他项目和全局用例跳过，计入 skipped
+        - 只软删除该项目下磁盘上已不存在的用例
         """
+        if project_id is not None:
+            from app.db.models.project import Project
+            if await self.db.get(Project, project_id) is None:
+                raise ResourceNotFoundError(f"项目不存在: {project_id}")
+
         root = get_code_testcases_dir()
         report = scan_code_testcases(root)
 
@@ -329,6 +341,7 @@ class CodeCaseScanService:
             scanned_files=report.scanned_files,
             scanned_cases=len(report.cases),
             errors=list(report.errors),
+            project_id=project_id,
         )
 
         # 缓存：项目名 -> project_id（避免重复查库）
@@ -352,6 +365,7 @@ class CodeCaseScanService:
                 logger.warning("@case(project=%r) 找不到对应项目，将作为全局用例入库", project_name)
             return pid
 
+        # 磁盘上存在的全部用例（含按项目扫描时跳过的），用于判断软删除
         seen: set[tuple[str, str]] = set()
 
         for sc in report.cases:
@@ -366,14 +380,20 @@ class CodeCaseScanService:
             # 项目归属完全由 @case(project=) 决定
             case_project_id = await _resolve_project_id(sc.project)
 
+            existing = await self.case_repo.find_by_identity(
+                sc.file_path, sc.function_name
+            )
+            if project_id is not None and case_project_id != project_id and (
+                existing is None or existing.project_id != project_id
+            ):
+                result.skipped += 1
+                continue
+
             module_id, created_cnt = await self.module_svc.ensure_module_path(
                 sc.module, user_id, project_id=case_project_id
             )
             result.modules_created += created_cnt
 
-            existing = await self.case_repo.find_by_identity(
-                sc.file_path, sc.function_name
-            )
             if existing is None:
                 await self.case_repo.create(
                     module_id=module_id, module=sc.module, name=sc.name,
@@ -403,7 +423,7 @@ class CodeCaseScanService:
         # 磁盘上不存在的用例 -> 软删除
         from datetime import datetime, timezone
         now = datetime.now(timezone.utc).replace(tzinfo=None)
-        for obj in await self.case_repo.list_all(include_deleted=False):
+        for obj in await self.case_repo.list_all(include_deleted=False, project_id=project_id):
             if (obj.file_path, obj.function_name) not in seen:
                 await self.case_repo.update(
                     obj, is_deleted=True, deleted_at=now, updated_by=user_id
@@ -418,9 +438,11 @@ class CodeCaseScanService:
 
         await self.db.commit()
         logger.info(
-            "代码用例扫描完成: 文件=%d 用例=%d 新增=%d 更新=%d 恢复=%d 删除=%d 模块新增=%d",
+            "代码用例扫描完成: 项目=%s 文件=%d 用例=%d 新增=%d 更新=%d 恢复=%d 删除=%d 跳过=%d 模块新增=%d",
+            project_id if project_id is not None else "全部",
             result.scanned_files, result.scanned_cases, result.created,
-            result.updated, result.restored, result.deleted, result.modules_created,
+            result.updated, result.restored, result.deleted, result.skipped,
+            result.modules_created,
         )
         return result
 

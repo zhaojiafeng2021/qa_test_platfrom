@@ -186,6 +186,32 @@ class Settings(BaseSettings):
     metrics_enabled: bool = Field(default=True, description="是否启用指标")
     metrics_port: int = Field(default=9090, description="指标端口")
 
+    # JaCoCo 覆盖率采集配置
+    jacoco_agent_jar_path: str = Field(
+        default="",
+        description="jacocoagent.jar 本地绝对路径（构建机需提前下载，-javaagent 注入用）",
+    )
+    jacoco_cli_jar_path: str = Field(
+        default="",
+        description="jacococli.jar 本地绝对路径（生成 XML/HTML 报告用）",
+    )
+    maven_home: str = Field(
+        default="",
+        description="Maven 安装目录（含 bin/mvn）；为空时从 PATH 查找",
+    )
+    coverage_workspace_dir: str = Field(
+        default="./coverage_workspace",
+        description="覆盖率采集工作目录（clone/build/exec 中间产物），按 {task_id}/{run_id}/{service_name}/ 组织",
+    )
+    coverage_java_max_concurrency: int = Field(
+        default=1,
+        description="单 run 内并行采集的最大服务数（MVP=1 顺序执行，避免 JVM 资源爆）",
+    )
+    coverage_java_default_timeout: int = Field(
+        default=1800,
+        description="单服务构建/报告生成默认超时时间（秒）",
+    )
+
     @field_validator("allowed_origins", mode="before")
     @classmethod
     def parse_allowed_origins(cls, v):

@@ -30,6 +30,8 @@ export default defineConfig(({ mode }) => {
   },
   test: {
     environment: 'node',
+    // element-plus 组件按需引入时会带 CSS side-effect import，需交给 vite 处理
+    server: { deps: { inline: ['element-plus'] } },
   },
   server: {
     port: 5273,
@@ -38,6 +40,11 @@ export default defineConfig(({ mode }) => {
       '/api': {
         target: env.VITE_PROXY_TARGET || process.env.VITE_PROXY_TARGET || 'http://localhost:8100',
         changeOrigin: true,
+      },
+      '/ws': {
+        target: env.VITE_PROXY_TARGET || process.env.VITE_PROXY_TARGET || 'http://localhost:8100',
+        changeOrigin: true,
+        ws: true,
       }
     }
   },

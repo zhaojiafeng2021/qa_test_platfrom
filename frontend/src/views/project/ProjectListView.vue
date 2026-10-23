@@ -220,6 +220,7 @@ interface Project {
   icon?: string
   color?: string
   status: string
+  is_public?: boolean
   created_at: string
   updated_at: string
   grafana_config_json?: {

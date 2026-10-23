@@ -29,6 +29,7 @@ router = APIRouter(prefix="/code-cases", tags=["代码用例"])
 
 @router.post("/scan")
 async def scan_code_cases(
+    project_id: Optional[int] = Query(None, description="只同步该项目的用例；不传则全量扫描"),
     db: AsyncSession = Depends(get_db),
     current_user: CurrentUser = Depends(get_current_user),
 ):
@@ -37,7 +38,7 @@ async def scan_code_cases(
     sync_result = ensure_latest()
 
     svc = CodeCaseScanService(db)
-    result = await svc.scan(current_user.id)
+    result = await svc.scan(current_user.id, project_id=project_id)
     return success_response(
         data={**result.model_dump(mode='json'), "sync": sync_result},
         message="同步+扫描完成"

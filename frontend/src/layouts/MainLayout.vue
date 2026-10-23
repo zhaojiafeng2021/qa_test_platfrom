@@ -114,7 +114,7 @@
 </template>
 
 <script setup lang="ts">
-import { computed, markRaw, nextTick, onMounted, ref, watch } from 'vue'
+import { computed, markRaw, nextTick, onMounted, ref, watch, type Component } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { ElMessage } from 'element-plus'
 import {
@@ -153,7 +153,16 @@ const currentProject = computed(() => projectStore.currentProject)
 
 const { hasPermission, hasAnyPermission, loading: permLoading } = usePermission()
 
-const navGroups = [
+interface NavItem {
+  key: string
+  label: string
+  emoji: string
+  icon: Component
+  /** 不设置则始终显示；支持 | 分隔的 OR 权限 */
+  permission?: string
+}
+
+const navGroups: { label: string; items: NavItem[] }[] = [
   { label: '工作台', items: [
     { key: 'dashboard', label: '项目工作台', emoji: '🏠', icon: markRaw(HomeFilled), permission: 'menu:dashboard:view' },
   ] },
@@ -167,6 +176,7 @@ const navGroups = [
     label: '测试执行',
     items: [
       { key: 'test-plans', label: '测试计划', emoji: '🎯', icon: markRaw(Calendar) },
+      { key: 'coverage', label: '代码覆盖率', emoji: '📊', icon: markRaw(DataAnalysis) },
     ],
   },
   {
@@ -212,6 +222,7 @@ const projectInitial = computed(() => currentProject.value?.name?.charAt(0) || '
 const projectMarkStyle = computed(() => ({ background: currentProject.value?.color || '#0EA5E9' }))
 const activeMenu = computed(() => {
   const segments = route.path.split('/')
+  if (segments[2] === 'coverage') return 'coverage'
   return String(segments[segments.length - 1] || 'dashboard')
 })
 

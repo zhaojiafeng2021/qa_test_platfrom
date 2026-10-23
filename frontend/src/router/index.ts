@@ -85,6 +85,30 @@ const routes: RouteRecordRaw[] = [
         name: 'Notifications',
         component: () => import('@/views/notification/NotificationCenterView.vue'),
         meta: { title: '飞书通知' }
+      },
+      {
+        path: 'coverage',
+        name: 'CoverageList',
+        component: () => import('@/views/coverage/CoverageListView.vue'),
+        meta: { title: '覆盖率任务' }
+      },
+      {
+        path: 'coverage/:taskId',
+        name: 'CoverageDetail',
+        component: () => import('@/views/coverage/CoverageDetailView.vue'),
+        meta: { title: '覆盖率任务详情' }
+      },
+      {
+        path: 'coverage/:taskId/reports/:reportId/code',
+        name: 'CoverageCode',
+        component: () => import('@/views/coverage/CoverageCodeView.vue'),
+        meta: { title: '覆盖率代码' }
+      },
+      {
+        path: 'coverage/:taskId/ledgers/:ledgerId/code',
+        name: 'CoverageLedgerCode',
+        component: () => import('@/views/coverage/CoverageCodeView.vue'),
+        meta: { title: '累积覆盖代码' }
       }
     ]
   },
