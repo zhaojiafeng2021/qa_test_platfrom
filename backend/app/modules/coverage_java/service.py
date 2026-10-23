@@ -12,13 +12,14 @@ from __future__ import annotations
 import asyncio
 import subprocess
 from datetime import datetime
+from pathlib import Path
 from typing import Any, Awaitable, Callable, Optional
 
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.errors import AppException, ErrorCode
 from app.core.logging import get_logger
-from app.db.models.coverage_java import CoverageTask, JavaCoverageReport, JavaCoverageRun
+from app.db.models.coverage_java import CoverageLedger, CoverageTask, JavaCoverageReport, JavaCoverageRun
 from app.modules.coverage_java.build_service import BuildError, JavaBuildService
 from app.modules.coverage_java.report_service import (
     JaCoCoReportService,
@@ -30,6 +31,12 @@ from app.modules.coverage_java.repository import (
     JavaCoverageRunRepository,
 )
 from app.modules.coverage_java.diff_service import DiffCoverageService
+from app.modules.coverage_java.ledger_service import (
+    CollectedResult,
+    LedgerService,
+    ledger_diff_coverage,
+    lines_to_items,
+)
 from app.modules.coverage_java.runtime_service import DEFAULT_AGENT_PORT, RuntimeDumpService
 
 logger = get_logger(__name__)
@@ -67,6 +74,7 @@ class CoverageJavaService:
         self.build_service = JavaBuildService()
         self.report_service = JaCoCoReportService()
         self.runtime_service = RuntimeDumpService()
+        self.ledger_service = LedgerService(db, self.report_service)
 
     # ──────────────────────────────────────────────
     # Task CRUD（API 层调用）
@@ -177,9 +185,13 @@ class CoverageJavaService:
         task_id: int,
         user_id: int,
         trigger_type: str = "manual",
+        commit_sha: Optional[str] = None,
+        source: Optional[str] = None,
     ) -> tuple[JavaCoverageRun, list[JavaCoverageReport]]:
         """触发采集：创建 run + 各服务占位 report，状态均为 queued。
 
+        commit_sha 须属于任务分支（关联代码源时校验，不传取分支 HEAD）；
+        未关联代码源的旧任务不支持指定 commit，由 clone 时的分支 HEAD 决定。
         调用方负责投递 arq 任务；本方法只写库不投递，便于事务边界清晰。
         """
         task = await self.get_task(project_id, task_id)
@@ -200,10 +212,25 @@ class CoverageJavaService:
                 http_status=422,
             )
 
+        if task.repo_id:
+            from app.modules.code_repository.service import CodeRepositoryService
+            repo_svc = CodeRepositoryService(self.db)
+            repo = await repo_svc.get(project_id, task.repo_id)
+            commit_sha = await repo_svc.resolve_commit(repo, task.branch, commit_sha)
+        elif commit_sha:
+            raise AppException(
+                message="任务未关联代码源，不支持指定 commit",
+                code=ErrorCode.VALIDATION_ERROR,
+                http_status=422,
+            )
+        source = source or task.collection_mode or "unittest"
+
         # 创建 run
         run = await self.run_repo.create(
             task_id=task.id,
             trigger_type=trigger_type,
+            commit_sha=commit_sha,
+            source=source,
             overall_status="queued",
             services_total=len(services),
             services_completed=0,
@@ -217,6 +244,7 @@ class CoverageJavaService:
                 run_id=run.id,
                 task_id=task.id,
                 service_name=svc["name"],
+                source=source,
                 status="queued",
                 progress=0,
                 stage="pending",
@@ -426,6 +454,107 @@ class CoverageJavaService:
         return result
 
     # ──────────────────────────────────────────────
+    # 累积账本（API 层调用）
+    # ──────────────────────────────────────────────
+
+    async def get_task_ledgers(self, project_id: int, task_id: int) -> list[dict]:
+        """按任务配置的服务列出 active 账本与历史轮次；尚无账本的服务 active=None"""
+        task = await self.get_task(project_id, task_id)
+        rounds = await self.ledger_service.list_rounds(task_id)
+        by_service: dict[str, list[CoverageLedger]] = {}
+        for led in rounds:
+            by_service.setdefault(led.service_name, []).append(led)
+
+        names = [s["name"] for s in (task.services or [])]
+        names += [n for n in by_service if n not in names]  # 已从任务移除的服务仍可查看历史
+        return [
+            {
+                "service_name": name,
+                "active": next((l for l in by_service.get(name, []) if l.is_active), None),
+                "rounds": by_service.get(name, []),
+                "branch_mismatch": any(l.is_active and l.branch != task.branch for l in by_service.get(name, [])),
+            }
+            for name in names
+        ]
+
+    async def get_ledger(self, project_id: int, ledger_id: int) -> tuple[CoverageLedger, CoverageTask]:
+        ledger = await self.db.get(CoverageLedger, ledger_id)
+        task = await self.task_repo.get(ledger.task_id) if ledger else None
+        if not ledger or not task or task.project_id != project_id:
+            raise AppException(
+                message=f"账本不存在: {ledger_id}",
+                code=ErrorCode.RESOURCE_NOT_FOUND,
+                http_status=404,
+            )
+        return ledger, task
+
+    async def list_ledger_files(self, project_id: int, ledger_id: int) -> list[dict]:
+        await self.get_ledger(project_id, ledger_id)
+        return await self.ledger_service.list_file_summaries(ledger_id)
+
+    async def get_ledger_file(self, project_id: int, ledger_id: int, file_path: str) -> dict:
+        """账本单文件：head_commit 源码快照 + 行覆盖（含 sources）"""
+        ledger, _ = await self.get_ledger(project_id, ledger_id)
+        lines = await self.ledger_service.load_file(ledger_id, file_path)
+        if lines is None:
+            raise AppException(
+                message=f"文件 {file_path} 不在该账本中",
+                code=ErrorCode.RESOURCE_NOT_FOUND,
+                http_status=404,
+            )
+        source: Optional[str] = None
+        if ledger.source_snapshot_path:
+            try:
+                source = self.report_service.read_source_from_snapshot(ledger.source_snapshot_path, file_path)
+            except Exception as e:
+                logger.error(f"Failed to read source snapshot for ledger {ledger_id}: {e}")
+        return {
+            "file_path": file_path,
+            "head_commit": ledger.head_commit,
+            "source": source or "",
+            "source_available": source is not None,
+            "line_coverage": lines_to_items(lines),
+        }
+
+    async def get_ledger_diff_coverage(self, project_id: int, ledger_id: int) -> dict:
+        """基于账本的增量覆盖率：merge-base(base, head)..head 的变更行 × 账本行数据"""
+        ledger, task = await self.get_ledger(project_id, ledger_id)
+        if not task.diff_base_branch:
+            raise AppException(
+                message="该任务未配置 diff_base_branch，无法计算增量覆盖率",
+                code=ErrorCode.VALIDATION_ERROR,
+                http_status=422,
+            )
+        merge_base, changed = await self.ledger_service.changed_lines(task, ledger)
+        result = ledger_diff_coverage(changed, await self.ledger_service.load_lines(ledger_id))
+        result.update(base_branch=task.diff_base_branch, merge_base=merge_base, head_commit=ledger.head_commit)
+        return result
+
+    async def get_ledger_events(self, project_id: int, ledger_id: int, limit: int = 100) -> dict:
+        ledger, _ = await self.get_ledger(project_id, ledger_id)
+        return {
+            "events": await self.ledger_service.list_events(ledger_id, limit),
+            "regression_methods": await self.ledger_service.regression_methods(ledger),
+        }
+
+    async def start_new_round(self, project_id: int, task_id: int, service_name: Optional[str]) -> list[str]:
+        """结束当前轮次（is_active=false 只读保留）；下一次采集以 reason=manual 开第 N+1 轮
+
+        service_name 为空时作用于任务下所有服务。返回实际被关闭的服务名。
+        """
+        task = await self.get_task(project_id, task_id)
+        if task.status in ("queued", "running"):
+            raise AppException(
+                message="任务有进行中的采集，请等待完成后再开始新一轮",
+                code=ErrorCode.REVISION_CONFLICT,
+                http_status=409,
+            )
+        names = [service_name] if service_name else sorted({l.service_name for l in await self.ledger_service.list_rounds(task_id)})
+        closed = [n for n in names if await self.ledger_service.close_round(task_id, n)]
+        await self.db.commit()
+        return closed
+
+    # ──────────────────────────────────────────────
     # 采集执行（arq worker 调用）
     # ──────────────────────────────────────────────
 
@@ -580,13 +709,14 @@ class CoverageJavaService:
 
         await self.report_repo.update_progress(report_id, 0, "pending", status="running")
 
-        if (task.collection_mode or "unittest") == "runtime":
+        source = run.source or task.collection_mode or "unittest"
+        if source == "runtime":
             # 运行时模式：clone + compile（拿 class/源码）→ tcpserver dump .exec
             host, port, reset = _resolve_runtime_target(task, service)
             await _progress(5, "clone", "克隆代码仓库...")
             build_result = await self.build_service.run_compile(
                 task_id=task.id, run_id=run.id, service=service,
-                repo_url=repo_url, branch=task.branch,
+                repo_url=repo_url, branch=task.branch, commit_sha=run.commit_sha,
             )
             await _progress(50, "test", f"从 {host}:{port} dump 运行时覆盖率...")
             dump_log = await self.runtime_service.dump_coverage(
@@ -599,13 +729,13 @@ class CoverageJavaService:
             await _progress(5, "clone", "克隆代码仓库...")
             build_result = await self.build_service.run_build(
                 task_id=task.id, run_id=run.id, service=service,
-                repo_url=repo_url, branch=task.branch,
+                repo_url=repo_url, branch=task.branch, commit_sha=run.commit_sha,
             )
             await _progress(60, "build", "构建完成，生成 JaCoCo 报告...")
 
         # 2. 生成报告 (progress 60 → 85)
         output_dir = build_result.exec_file.parent
-        xml_path, html_dir = await self.report_service.generate_xml_html(
+        xml_path, html_dir, mismatch_classes = await self.report_service.generate_xml_html(
             exec_file=build_result.exec_file,
             classfiles_dir=build_result.classfiles_dir,
             sourcefiles_dir=build_result.sourcefiles_dir,
@@ -651,11 +781,51 @@ class CoverageJavaService:
             branches_total=overall.get("branches_total"),
             line_coverage_json=parsed["files"],
             source_snapshot_path=snapshot_path,
+            warnings={"mismatch_classes": mismatch_classes} if mismatch_classes else None,
             **artifact_paths,
         )
+        if mismatch_classes:
+            logger.warning(
+                f"[{service_name}] {len(mismatch_classes)} classes do not match exec data "
+                f"(部署包与平台编译产物不一致): {mismatch_classes[:10]}"
+            )
         await self.db.commit()
 
-        # 6. 广播 service_done
+        # 6. 并入累积账本：失败只记日志，不影响单次报告
+        ledger_summary = None
+        if build_result.commit_sha:
+            try:
+                await self.db.refresh(report)
+                ledger = await self.ledger_service.merge(
+                    CollectedResult(
+                        report=report,
+                        source=source,
+                        commit=build_result.commit_sha,
+                        exec_file=build_result.exec_file,
+                        classfiles_dir=build_result.classfiles_dir,
+                        sourcefiles_dir=build_result.sourcefiles_dir,
+                        repo_dir=Path(build_result.extra.get("service_dir") or output_dir),
+                        parsed_files=parsed["files"],
+                        mismatch_classes=mismatch_classes,
+                        work_dir=output_dir,
+                    ),
+                    branch=task.branch,
+                )
+                await self.db.commit()
+                ledger_summary = {
+                    "ledger_id": ledger.id,
+                    "round_no": ledger.round_no,
+                    "head_commit": ledger.head_commit,
+                    "line_rate": ledger.line_rate,
+                    "branch_rate": ledger.branch_rate,
+                    "lines_covered": ledger.lines_covered,
+                    "lines_total": ledger.lines_total,
+                }
+            except Exception:
+                await self.db.rollback()
+                logger.exception(f"[{service_name}] ledger merge failed, single report kept")
+
+        # 7. 广播 service_done
         await progress_callback({
             "type": "service_done",
             "report_id": report_id,
@@ -669,6 +839,7 @@ class CoverageJavaService:
                 "lines_covered": overall.get("lines_covered"),
                 "lines_total": overall.get("lines_total"),
             },
+            "ledger": ledger_summary,
         })
 
     async def _mark_service_failed(

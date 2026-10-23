@@ -3,19 +3,21 @@
     <div class="page-head">
       <div class="title-row">
         <el-button link :icon="ArrowLeft" @click="goBack">返回</el-button>
-        <h1>行级覆盖 · Report #{{ reportId }}</h1>
+        <h1 v-if="isLedger">累积覆盖 · Ledger #{{ ledgerId }}</h1>
+        <h1 v-else>行级覆盖 · Report #{{ reportId }}</h1>
         <el-tag v-if="isIteration" size="small" effect="plain">迭代增量</el-tag>
         <span v-if="isIteration && diff" class="diff-summary">
           {{ task?.branch }} vs {{ diff.base_branch }} ·
           <b :style="{ color: diff.lines_total ? diffRateColor(diff.line_rate) : undefined }">
             {{ diff.lines_total ? `${diff.line_rate}%` : '—' }}
           </b>
-          （{{ diff.lines_covered }} / {{ diff.lines_total }} 行）
+          （{{ diff.lines_covered }} / {{ diff.lines_total }} 行<template v-if="isLedger">，继承 {{ (diff as LedgerDiffCoverage).lines_inherited }}</template>）
         </span>
       </div>
       <div class="legend">
         <span v-if="isIteration" class="legend-item"><span class="swatch changed" />本次迭代变更行</span>
-        <span class="legend-item"><span class="swatch covered" />已覆盖</span>
+        <span class="legend-item"><span class="swatch covered" />{{ isLedger ? '实测覆盖' : '已覆盖' }}</span>
+        <span v-if="isLedger" class="legend-item"><span class="swatch inherited" />仅继承覆盖</span>
         <span class="legend-item"><span class="swatch missed" />未覆盖</span>
         <span class="legend-item"><span class="swatch partial" />部分覆盖</span>
         <span class="legend-item"><span class="swatch unknown" />无数据</span>
@@ -58,22 +60,27 @@
             type="info"
             :closable="false"
             show-icon
-            title="该报告没有源码快照（早期采集或快照上传失败），仅显示行级覆盖标记。重新触发采集后可查看源码。"
+            :title="isLedger ? '账本 head commit 对应的报告没有源码快照，仅显示行级覆盖标记。' : '该报告没有源码快照（早期采集或快照上传失败），仅显示行级覆盖标记。重新触发采集后可查看源码。'"
           />
-          <el-scrollbar class="code-scroll">
+          <el-scrollbar ref="codeScroll" class="code-scroll">
             <div class="code-table">
               <div
                 v-for="(line, idx) in sourceLines"
                 :key="idx"
+                :data-line="idx + 1"
                 :class="[
                   'code-line',
                   lineStatus(idx + 1),
-                  { changed: changedLineSet.has(idx + 1), dimmed: isIteration && !changedLineSet.has(idx + 1) },
+                  {
+                    changed: changedLineSet.has(idx + 1),
+                    dimmed: isIteration && !changedLineSet.has(idx + 1),
+                    focused: focusRange && idx + 1 >= focusRange[0] && idx + 1 <= focusRange[1],
+                  },
                 ]"
               >
                 <span class="line-no">{{ idx + 1 }}</span>
                 <span class="line-marker" :title="markerTooltip(idx + 1)">{{ markerChar(idx + 1) }}</span>
-                <span class="line-code">{{ line }}</span>
+                <span class="line-code">{{ line }}<span v-if="lineStatus(idx + 1) === 'inherited'" class="inherit-badge" :title="markerTooltip(idx + 1)">继承</span></span>
               </div>
             </div>
           </el-scrollbar>
@@ -85,11 +92,20 @@
 </template>
 
 <script setup lang="ts">
-import { computed, onMounted, ref } from 'vue'
+import { computed, nextTick, onMounted, ref } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { ElMessage } from 'element-plus'
+import type { ScrollbarInstance } from 'element-plus'
 import { ArrowLeft, Search } from '@element-plus/icons-vue'
-import { getCoverageTask, getReportDiffCoverage, getReportFileContent, listReportFiles } from '@/api/coverage'
+import {
+  getCoverageTask,
+  getLedgerDiffCoverage,
+  getLedgerFile,
+  getReportDiffCoverage,
+  getReportFileContent,
+  listLedgerFiles,
+  listReportFiles,
+} from '@/api/coverage'
 import { useProjectStore } from '@/stores/project'
 import type {
   CoverageTask,
@@ -97,22 +113,40 @@ import type {
   DiffCoverageFile,
   FileContentWithCoverage,
   FileCoverageSummary,
+  LedgerDiffCoverage,
+  LedgerFileContent,
   LineCoverage,
   LineCoverStatus,
+  LineSource,
 } from '@/types/coverage'
 
 const route = useRoute()
 const router = useRouter()
 const projectStore = useProjectStore()
 const reportId = computed(() => Number(route.params.reportId))
+// 账本模式：同一页面展示累积覆盖，行级数据带来源 sources
+const isLedger = computed(() => route.name === 'CoverageLedgerCode')
+const ledgerId = computed(() => Number(route.params.ledgerId))
 
 const files = ref<FileCoverageSummary[]>([])
 const filesLoading = ref(false)
 const fileFilter = ref('')
 
-const fileContent = ref<FileContentWithCoverage | null>(null)
+const fileContent = ref<FileContentWithCoverage | LedgerFileContent | null>(null)
 const contentLoading = ref(false)
 const selectedPath = ref('')
+const codeScroll = ref<ScrollbarInstance | null>(null)
+
+// 从需回归方法跳转过来时高亮方法行范围
+const focusPath = typeof route.query.path === 'string' ? route.query.path : ''
+const focusRange = ref<[number, number] | null>(null)
+
+function readFocusRange(): [number, number] | null {
+  const start = Number(route.query.line)
+  if (!Number.isFinite(start) || start <= 0) return null
+  const end = Number(route.query.end)
+  return [start, Number.isFinite(end) && end >= start ? end : start]
+}
 
 // 配置了 diff_base_branch 的任务即迭代任务：只展示本次迭代变更代码的覆盖情况，
 // 不展示非本次迭代代码（避免存量代码的覆盖率干扰迭代评估）
@@ -143,7 +177,10 @@ const changedLineSet = computed<Set<number>>(() => {
 
 async function loadDiff(): Promise<void> {
   try {
-    diff.value = await getReportDiffCoverage(reportId.value)
+    const pid = projectStore.currentProjectId
+    diff.value = isLedger.value
+      ? (pid ? await getLedgerDiffCoverage(pid, ledgerId.value) : null)
+      : await getReportDiffCoverage(reportId.value)
   } catch (e: any) {
     diffError.value = e?.response?.data?.message || e?.message || '增量覆盖率计算失败'
   }
@@ -158,24 +195,30 @@ const sourceLines = computed(() => {
   return Array.from({ length: maxLine }, () => '')
 })
 
-const lineCoverageMap = computed<Map<number, LineCoverage>>(() => {
-  const m = new Map<number, LineCoverage>()
+const lineCoverageMap = computed<Map<number, LineCoverage & { sources?: LineSource[] }>>(() => {
+  const m = new Map<number, LineCoverage & { sources?: LineSource[] }>()
   for (const lc of fileContent.value?.line_coverage ?? []) {
     m.set(lc.line_no, lc)
   }
   return m
 })
 
-function lineStatus(lineNo: number): LineCoverStatus | 'none' {
+const SOURCE_TEXT: Record<LineSource, string> = { unittest: '单测', runtime: '运行时', inherited: '继承' }
+
+function lineStatus(lineNo: number): LineCoverStatus | 'inherited' | 'none' {
   // 迭代任务下非变更行不着色
   if (isIteration.value && !changedLineSet.value.has(lineNo)) return 'none'
-  return lineCoverageMap.value.get(lineNo)?.status ?? 'none'
+  const lc = lineCoverageMap.value.get(lineNo)
+  if (!lc) return 'none'
+  // 账本中仅靠继承得到的覆盖：浅绿 + 角标，与实测覆盖区分
+  if (lc.status === 'covered' && lc.sources?.length === 1 && lc.sources[0] === 'inherited') return 'inherited'
+  return lc.status
 }
 
 function markerChar(lineNo: number): string {
   const s = lineStatus(lineNo)
-  if (s === 'covered') return '●'
-  if (s === 'missed') return '●'
+  if (s === 'covered' || s === 'missed') return '●'
+  if (s === 'inherited') return '○'
   if (s === 'partial') return '◐'
   return ''
 }
@@ -184,7 +227,9 @@ function markerTooltip(lineNo: number): string {
   if (lineStatus(lineNo) === 'none') return ''
   const lc = lineCoverageMap.value.get(lineNo)
   if (!lc) return ''
-  return `ci=${lc.covered_instructions} mi=${lc.missed_instructions} cb=${lc.covered_branches} mb=${lc.missed_branches}`
+  const base = `ci=${lc.covered_instructions} mi=${lc.missed_instructions} cb=${lc.covered_branches} mb=${lc.missed_branches}`
+  if (!lc.sources?.length) return base
+  return `来源：${lc.sources.map((s) => SOURCE_TEXT[s]).join(' + ')}\n${base}`
 }
 
 function basename(p: string): string {
@@ -223,13 +268,28 @@ async function selectFile(path: string): Promise<void> {
   contentLoading.value = true
   fileContent.value = null
   try {
-    fileContent.value = await getReportFileContent(reportId.value, path)
+    const pid = projectStore.currentProjectId
+    if (isLedger.value) {
+      if (!pid) return
+      fileContent.value = await getLedgerFile(pid, ledgerId.value, path)
+    } else {
+      fileContent.value = await getReportFileContent(reportId.value, path)
+    }
   } catch (e: any) {
-    ElMessage.error(e?.response?.data?.detail || '加载文件失败')
+    ElMessage.error(e?.response?.data?.message || e?.response?.data?.detail || '加载文件失败')
     selectedPath.value = ''
   } finally {
     contentLoading.value = false
   }
+}
+
+async function scrollToFocus(): Promise<void> {
+  const range = focusRange.value
+  if (!range) return
+  await nextTick()
+  const wrap = codeScroll.value?.wrapRef
+  const el = wrap?.querySelector<HTMLElement>(`[data-line="${range[0]}"]`)
+  if (wrap && el) codeScroll.value?.setScrollTop(Math.max(0, el.offsetTop - wrap.clientHeight / 3))
 }
 
 function goBack(): void {
@@ -241,16 +301,25 @@ onMounted(async () => {
   try {
     const pid = projectStore.currentProjectId
     const [fileList, t] = await Promise.all([
-      listReportFiles(reportId.value),
+      isLedger.value
+        ? (pid ? listLedgerFiles(pid, ledgerId.value) : Promise.resolve([]))
+        : listReportFiles(reportId.value),
       pid ? getCoverageTask(pid, Number(route.params.taskId)) : Promise.resolve(null),
     ])
     files.value = fileList
     task.value = t
     if (isIteration.value) await loadDiff()
   } catch (e: any) {
-    ElMessage.error(e?.response?.data?.detail || '加载文件列表失败')
+    ElMessage.error(e?.response?.data?.message || e?.response?.data?.detail || '加载文件列表失败')
   } finally {
     filesLoading.value = false
+  }
+  // 指定了文件（来自需回归方法）时直接打开，即使它不在迭代变更文件中
+  if (focusPath && files.value.some((f) => f.file_path === focusPath)) {
+    focusRange.value = readFocusRange()
+    await selectFile(focusPath)
+    await scrollToFocus()
+    return
   }
   const first = filteredFiles.value[0]
   if (first) await selectFile(first.file_path)
@@ -412,4 +481,19 @@ onMounted(async () => {
 .code-line.missed .line-marker { color: var(--el-color-danger); }
 .code-line.partial { background: rgba(230, 162, 60, 0.15); }
 .code-line.partial .line-marker { color: var(--el-color-warning); }
+/* 仅继承覆盖：浅绿 + 角标，区分于实测覆盖 */
+.code-line.inherited { background: rgba(103, 194, 58, 0.05); }
+.code-line.inherited .line-marker { color: #95d475; }
+.code-line.focused { outline: 1px dashed var(--el-color-primary); outline-offset: -1px; }
+.inherit-badge {
+  margin-left: 8px;
+  padding: 0 4px;
+  font-size: 10px;
+  line-height: 14px;
+  border-radius: 3px;
+  color: #529b2e;
+  background: rgba(149, 212, 117, 0.25);
+  user-select: none;
+}
+.swatch.inherited { background: rgba(103, 194, 58, 0.08); border-left: 3px solid #b3e19d; }
 </style>

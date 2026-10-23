@@ -14,6 +14,12 @@ import type {
   FileCoverageSummary,
   JavaCoverageReport,
   JavaCoverageRunPage,
+  LedgerDiffCoverage,
+  LedgerEvents,
+  LedgerFileContent,
+  RepoCommit,
+  ServiceLedgers,
+  TriggerPayload,
   TriggerResponse,
 } from '@/types/coverage'
 
@@ -59,10 +65,10 @@ export const deleteCoverageTask = (projectId: number, taskId: number) =>
 
 // ─── 触发 / 取消 ───
 
-export const triggerCoverageTask = (projectId: number, taskId: number) =>
+export const triggerCoverageTask = (projectId: number, taskId: number, data?: TriggerPayload) =>
   client.post(
     `/projects/${projectId}/coverage-tasks/${taskId}/trigger`,
-    null,
+    data ?? null,
     { headers: { 'Idempotency-Key': idempotencyKey() } },
   ) as unknown as Promise<TriggerResponse>
 
@@ -115,6 +121,35 @@ export const listRepoBranches = (projectId: number, repoId: number) =>
 
 export const listRepoServices = (projectId: number, repoId: number, branch: string) =>
   client.get(`/projects/${projectId}/code-repos/${repoId}/services`, { params: { branch } }) as unknown as Promise<RepoService[]>
+
+export const listRepoCommits = (projectId: number, repoId: number, branch: string, limit = 30) =>
+  client.get(`/projects/${projectId}/code-repos/${repoId}/commits`, { params: { branch, limit } }) as unknown as Promise<RepoCommit[]>
+
+// ─── 累积账本 ───
+
+export const getTaskLedgers = (projectId: number, taskId: number) =>
+  client.get(`/projects/${projectId}/coverage-tasks/${taskId}/ledger`) as unknown as Promise<ServiceLedgers[]>
+
+export const startLedgerNewRound = (projectId: number, taskId: number, serviceName?: string) =>
+  client.post(
+    `/projects/${projectId}/coverage-tasks/${taskId}/ledger/new-round`,
+    serviceName ? { service_name: serviceName } : null,
+  ) as unknown as Promise<{ closed_services: string[] }>
+
+export const listLedgerFiles = (projectId: number, ledgerId: number) =>
+  client.get(`/projects/${projectId}/coverage-ledgers/${ledgerId}/files`) as unknown as Promise<FileCoverageSummary[]>
+
+export const getLedgerFile = (projectId: number, ledgerId: number, path: string) =>
+  client.get(`/projects/${projectId}/coverage-ledgers/${ledgerId}/file`, { params: { path } }) as unknown as Promise<LedgerFileContent>
+
+export const getLedgerDiffCoverage = (projectId: number, ledgerId: number) =>
+  client.get(
+    `/projects/${projectId}/coverage-ledgers/${ledgerId}/diff-coverage`,
+    { silent: true } as AxiosRequestConfig,
+  ) as unknown as Promise<LedgerDiffCoverage>
+
+export const getLedgerEvents = (projectId: number, ledgerId: number, limit = 50) =>
+  client.get(`/projects/${projectId}/coverage-ledgers/${ledgerId}/events`, { params: { limit } }) as unknown as Promise<LedgerEvents>
 
 // ─── WebSocket URL ───
 

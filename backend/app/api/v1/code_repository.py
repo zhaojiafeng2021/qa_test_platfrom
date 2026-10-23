@@ -6,6 +6,7 @@
 - DELETE /projects/{pid}/code-repos/{rid}                    删除
 - GET    /projects/{pid}/code-repos/{rid}/branches           远程分支
 - GET    /projects/{pid}/code-repos/{rid}/services?branch=   分支下的 Java 服务
+- GET    /projects/{pid}/code-repos/{rid}/commits?branch=    分支最近提交（触发采集下拉）
 """
 from fastapi import APIRouter, Depends, Query
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -89,3 +90,16 @@ async def list_repo_services(
     svc = CodeRepositoryService(db)
     repo = await svc.get(project_id, repo_id)
     return success_response(data=await svc.discover_services(repo, branch))
+
+
+@router.get("/projects/{project_id}/code-repos/{repo_id}/commits", dependencies=_read)
+async def list_repo_commits(
+    project_id: int,
+    repo_id: int,
+    branch: str = Query(..., min_length=1, max_length=100),
+    limit: int = Query(30, ge=1, le=100),
+    db: AsyncSession = Depends(get_db),
+):
+    svc = CodeRepositoryService(db)
+    repo = await svc.get(project_id, repo_id)
+    return success_response(data=await svc.list_commits(repo, branch, limit))

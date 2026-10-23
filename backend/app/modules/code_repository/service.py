@@ -6,6 +6,7 @@
 from __future__ import annotations
 
 import asyncio
+import re
 import shutil
 from pathlib import Path, PurePosixPath
 from typing import Optional
@@ -24,6 +25,22 @@ logger = get_logger(__name__)
 BUILD_FILES = {"pom.xml": "maven", "build.gradle": "gradle", "build.gradle.kts": "gradle"}
 _GIT_TIMEOUT = 120
 _locks: dict[int, asyncio.Lock] = {}
+
+
+_SHA_RE = re.compile(r"[0-9a-fA-F]{7,40}")
+
+
+def _check_branch(branch: str) -> None:
+    if not branch or branch.startswith("-"):
+        raise _git_error("分支名不合法")
+
+
+def _parse_commit_line(line: str) -> dict:
+    sha, short_sha, author, committed_at, subject = (line.split("\x1f") + [""] * 5)[:5]
+    return {
+        "sha": sha, "short_sha": short_sha, "author": author,
+        "committed_at": committed_at, "subject": subject,
+    }
 
 
 def _git_error(message: str, detail: str = "") -> AppException:
@@ -118,14 +135,78 @@ class CodeRepositoryService:
         return branches
 
     async def discover_services(self, repo: CodeRepository, branch: str) -> list[dict]:
-        if not branch or branch.startswith("-"):
-            raise _git_error("分支名不合法")
+        _check_branch(branch)
         lock = _locks.setdefault(repo.id, asyncio.Lock())
         async with lock:
-            cache = await self._ensure_cache(repo)
-            await _git(["fetch", "--prune", "origin", "+refs/heads/*:refs/heads/*"], cwd=cache)
+            cache = await self._fetch_cache(repo)
             out = await _git(["ls-tree", "-r", "--name-only", f"refs/heads/{branch}"], cwd=cache)
         return self._parse_services(out.splitlines(), repo_name=_repo_basename(repo.repo_url))
+
+    async def list_commits(self, repo: CodeRepository, branch: str, limit: int = 30) -> list[dict]:
+        """分支最近 N 条提交（供触发采集时下拉选择）"""
+        _check_branch(branch)
+        lock = _locks.setdefault(repo.id, asyncio.Lock())
+        async with lock:
+            cache = await self._fetch_cache(repo)
+            out = await _git(
+                ["log", f"refs/heads/{branch}", "-n", str(limit), "--format=%H%x1f%h%x1f%an%x1f%aI%x1f%s"],
+                cwd=cache,
+            )
+        return [_parse_commit_line(line) for line in out.splitlines() if line.strip()]
+
+    async def resolve_commit(self, repo: CodeRepository, branch: str, commit_sha: Optional[str]) -> str:
+        """返回完整 sha：不传时取分支 HEAD；传入时校验它属于该分支历史，否则 400"""
+        _check_branch(branch)
+        if commit_sha is not None and not _SHA_RE.fullmatch(commit_sha):
+            raise _git_error("commit sha 格式不合法")
+        lock = _locks.setdefault(repo.id, asyncio.Lock())
+        async with lock:
+            cache = await self._fetch_cache(repo)
+            ref = f"refs/heads/{branch}"
+            if commit_sha is None:
+                return (await _git(["rev-parse", "--verify", f"{ref}^{{commit}}"], cwd=cache)).strip()
+            code, out = await _run_cmd(
+                ["git", "rev-parse", "--verify", "--quiet", f"{commit_sha}^{{commit}}"],
+                cwd=cache, timeout=_GIT_TIMEOUT, log_prefix="[repo]",
+            )
+            full_sha = out.strip()
+            if code != 0 or not full_sha:
+                raise _git_error(f"commit {commit_sha} 不存在")
+            # exit 0 = 是祖先，1 = 不是，其他 = 出错
+            code, out = await _run_cmd(
+                ["git", "merge-base", "--is-ancestor", full_sha, ref],
+                cwd=cache, timeout=_GIT_TIMEOUT, log_prefix="[repo]",
+            )
+            if code == 1:
+                raise _git_error(f"commit {commit_sha} 不属于分支 {branch}")
+            if code != 0:
+                raise _git_error("git merge-base 失败", out)
+            return full_sha
+
+    async def changed_lines(self, repo: CodeRepository, base_branch: str, head_sha: str) -> tuple[str, dict[str, set[int]]]:
+        """merge-base(base_branch, head_sha)..head_sha 的新增/修改行（bare 缓存仓库，blob 按需拉取）"""
+        from app.modules.coverage_java.diff_service import DiffCoverageService
+
+        _check_branch(base_branch)
+        if not _SHA_RE.fullmatch(head_sha or ""):
+            raise _git_error("commit sha 格式不合法")
+        lock = _locks.setdefault(repo.id, asyncio.Lock())
+        async with lock:
+            cache = await self._fetch_cache(repo)
+            # _run_cmd 合并了 stderr，sha 取最后一行
+            out = await _git(["merge-base", f"refs/heads/{base_branch}", head_sha], cwd=cache)
+            merge_base = out.strip().splitlines()[-1].strip()
+            diff = await _git(
+                ["-c", "core.quotepath=false", "diff", "-U0", "--no-color", "--no-ext-diff",
+                 "--diff-filter=ACMR", f"{merge_base}..{head_sha}"],
+                cwd=cache,
+            )
+        return merge_base, DiffCoverageService._parse_diff_output(diff)
+
+    async def _fetch_cache(self, repo: CodeRepository) -> Path:
+        cache = await self._ensure_cache(repo)
+        await _git(["fetch", "--prune", "origin", "+refs/heads/*:refs/heads/*"], cwd=cache)
+        return cache
 
     def _cache_dir(self, repo_id: int) -> Path:
         return self.cache_root / str(repo_id)

@@ -25,6 +25,7 @@ import type {
   JavaCoverageReport,
   JavaCoverageRun,
   TaskStatus,
+  TriggerPayload,
   WsMessage,
 } from '@/types/coverage'
 import { CoverageProgressClient } from '@/utils/progress-ws'
@@ -113,8 +114,8 @@ export const useCoverageStore = defineStore('coverage', () => {
     runsTotal.value = data.total
   }
 
-  async function trigger(projectId: number, taskId: number): Promise<number> {
-    const resp = await triggerCoverageTask(projectId, taskId)
+  async function trigger(projectId: number, taskId: number, payload?: TriggerPayload): Promise<number> {
+    const resp = await triggerCoverageTask(projectId, taskId, payload)
     if (currentTask.value?.id === taskId) {
       currentTask.value = {
         ...currentTask.value,

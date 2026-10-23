@@ -124,10 +124,13 @@ class CodeTestCaseRepository:
         )
         return r.scalars().first()
 
-    async def list_all(self, include_deleted: bool = False) -> list[CodeTestCase]:
+    async def list_all(self, include_deleted: bool = False,
+                       project_id: Optional[int] = None) -> list[CodeTestCase]:
         stmt = select(CodeTestCase)
         if not include_deleted:
             stmt = stmt.where(CodeTestCase.is_deleted.is_(False))
+        if project_id is not None:
+            stmt = stmt.where(CodeTestCase.project_id == project_id)
         r = await self.db.execute(stmt)
         return list(r.scalars().all())
 

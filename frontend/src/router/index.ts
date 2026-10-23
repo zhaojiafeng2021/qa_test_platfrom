@@ -103,6 +103,12 @@ const routes: RouteRecordRaw[] = [
         name: 'CoverageCode',
         component: () => import('@/views/coverage/CoverageCodeView.vue'),
         meta: { title: '覆盖率代码' }
+      },
+      {
+        path: 'coverage/:taskId/ledgers/:ledgerId/code',
+        name: 'CoverageLedgerCode',
+        component: () => import('@/views/coverage/CoverageCodeView.vue'),
+        meta: { title: '累积覆盖代码' }
       }
     ]
   },

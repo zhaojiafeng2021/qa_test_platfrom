@@ -14,6 +14,14 @@ REST 路由：
 - GET    /coverage/reports/{report_id}/files            报告文件列表 + 覆盖汇总
 - GET    /coverage/reports/{report_id}/file-content     单文件源码 + 行级覆盖
 - GET    /coverage/reports/{report_id}/build-log        构建日志
+
+累积账本：
+- GET    /projects/{pid}/coverage-tasks/{tid}/ledger            各服务当前账本 + 历史轮次
+- POST   /projects/{pid}/coverage-tasks/{tid}/ledger/new-round  开始新一轮
+- GET    /projects/{pid}/coverage-ledgers/{lid}/files           账本文件列表
+- GET    /projects/{pid}/coverage-ledgers/{lid}/file?path=      单文件源码 + 行覆盖（含 sources）
+- GET    /projects/{pid}/coverage-ledgers/{lid}/diff-coverage   基于账本的增量覆盖率
+- GET    /projects/{pid}/coverage-ledgers/{lid}/events          合并历史 + 需回归方法
 """
 from typing import Optional
 
@@ -28,6 +36,12 @@ from app.schemas.coverage_java import (
     CoverageTaskCreate,
     CoverageTaskUpdate,
     DiffCoverageResponse,
+    LedgerDiffCoverageResponse,
+    LedgerEventsResponse,
+    LedgerFileContent,
+    NewRoundRequest,
+    ServiceLedgers,
+    TriggerRequest,
 )
 from app.workers.coverage_java_tasks import (
     abort_coverage_collection,
@@ -145,14 +159,20 @@ async def delete_coverage_task(
 async def trigger_coverage_task(
     project_id: int,
     task_id: int,
+    body: Optional[TriggerRequest] = None,
     current_user: CurrentUser = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ):
-    """触发覆盖率采集：创建 run + 占位 reports → 投递 arq → 返回 run_id"""
+    """触发覆盖率采集：创建 run + 占位 reports → 投递 arq → 返回 run_id
+
+    body 可省略：commit_sha 不传取分支 HEAD，source 不传用任务的 collection_mode。
+    """
+    body = body or TriggerRequest()
     service = CoverageJavaService(db)
     run, reports = await service.trigger(
         project_id=project_id, task_id=task_id,
         user_id=current_user.id, trigger_type="manual",
+        commit_sha=body.commit_sha, source=body.source,
     )
 
     # 投递 arq（repo_url 从 task 读出）
@@ -293,3 +313,88 @@ async def get_report_diff_coverage(
     service = CoverageJavaService(db)
     result = await service.get_diff_coverage(report_id)
     return success_response(data=DiffCoverageResponse.model_validate(result).model_dump())
+
+
+# ──────────────────────────────────────────────
+# 累积账本
+# ──────────────────────────────────────────────
+
+@router.get("/projects/{project_id}/coverage-tasks/{task_id}/ledger")
+async def get_task_ledgers(
+    project_id: int,
+    task_id: int,
+    current_user: CurrentUser = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    """各服务当前账本汇总（轮次、head_commit、来源占比）+ 历史轮次"""
+    items = await CoverageJavaService(db).get_task_ledgers(project_id, task_id)
+    return success_response(data=[
+        ServiceLedgers.model_validate(i, from_attributes=True).model_dump(mode="json") for i in items
+    ])
+
+
+@router.post(
+    "/projects/{project_id}/coverage-tasks/{task_id}/ledger/new-round",
+    dependencies=[Depends(require_project_permission("coverage:trigger"))],
+)
+async def start_ledger_new_round(
+    project_id: int,
+    task_id: int,
+    body: Optional[NewRoundRequest] = None,
+    current_user: CurrentUser = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    """开始新一轮：当前账本 is_active=false 只读保留，下一次采集开第 N+1 轮"""
+    body = body or NewRoundRequest()
+    closed = await CoverageJavaService(db).start_new_round(project_id, task_id, body.service_name)
+    return success_response(data={"closed_services": closed}, message="已开始新一轮，下次采集生效")
+
+
+@router.get("/projects/{project_id}/coverage-ledgers/{ledger_id}/files")
+async def list_ledger_files(
+    project_id: int,
+    ledger_id: int,
+    current_user: CurrentUser = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    """账本文件列表 + 行覆盖汇总"""
+    files = await CoverageJavaService(db).list_ledger_files(project_id, ledger_id)
+    return success_response(data=files)
+
+
+@router.get("/projects/{project_id}/coverage-ledgers/{ledger_id}/file")
+async def get_ledger_file(
+    project_id: int,
+    ledger_id: int,
+    path: str = Query(..., min_length=1, max_length=500, description="JaCoCo 文件 key，如 com/example/Foo.java"),
+    current_user: CurrentUser = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    """单文件源码（head_commit 快照）+ 行覆盖（含 sources）"""
+    result = await CoverageJavaService(db).get_ledger_file(project_id, ledger_id, path)
+    return success_response(data=LedgerFileContent.model_validate(result).model_dump())
+
+
+@router.get("/projects/{project_id}/coverage-ledgers/{ledger_id}/diff-coverage")
+async def get_ledger_diff_coverage(
+    project_id: int,
+    ledger_id: int,
+    current_user: CurrentUser = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    """基于账本的增量覆盖率：merge-base(base, head)..head 的变更行 × 账本累积覆盖"""
+    result = await CoverageJavaService(db).get_ledger_diff_coverage(project_id, ledger_id)
+    return success_response(data=LedgerDiffCoverageResponse.model_validate(result).model_dump())
+
+
+@router.get("/projects/{project_id}/coverage-ledgers/{ledger_id}/events")
+async def get_ledger_events(
+    project_id: int,
+    ledger_id: int,
+    limit: int = Query(100, ge=1, le=500),
+    current_user: CurrentUser = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    """合并历史（新的在前）+ 需回归方法"""
+    result = await CoverageJavaService(db).get_ledger_events(project_id, ledger_id, limit)
+    return success_response(data=LedgerEventsResponse.model_validate(result, from_attributes=True).model_dump(mode="json"))

@@ -71,6 +71,15 @@
     </div>
 
     <div v-if="report.stage_detail" class="stage-detail">{{ report.stage_detail }}</div>
+    <div v-if="mismatchClasses.length" class="mismatch-msg">
+      <el-icon><WarningFilled /></el-icon>
+      <el-tooltip placement="top">
+        <template #content>
+          <div v-for="c in mismatchClasses" :key="c">{{ c }}</div>
+        </template>
+        <span>{{ mismatchClasses.length }} 个类的 exec 与编译 class 不一致，覆盖未计入（悬停查看）</span>
+      </el-tooltip>
+    </div>
     <div v-if="report.error_message" class="error-msg">
       <el-icon><WarningFilled /></el-icon>
       <span>{{ report.error_message }}</span>
@@ -137,6 +146,8 @@ function rateColor(rate: number, total: number): string {
   if (rate >= 60) return 'var(--el-color-warning)'
   return 'var(--el-color-danger)'
 }
+
+const mismatchClasses = computed(() => props.report.warnings?.mismatch_classes ?? [])
 
 const statusText = computed(() => {
   switch (props.report.status) {
@@ -240,6 +251,14 @@ const stageText = computed(() => {
   margin-top: 6px;
   font-size: 12px;
   color: var(--el-text-color-secondary);
+}
+.mismatch-msg {
+  margin-top: 6px;
+  font-size: 12px;
+  color: var(--el-color-warning);
+  display: flex;
+  align-items: center;
+  gap: 4px;
 }
 .error-msg {
   margin-top: 6px;

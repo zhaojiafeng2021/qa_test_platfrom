@@ -7,6 +7,7 @@
 """
 from sqlalchemy import (
     BigInteger,
+    Boolean,
     Column,
     DateTime,
     Float,
@@ -15,6 +16,7 @@ from sqlalchemy import (
     JSON,
     String,
     Text,
+    UniqueConstraint,
 )
 from sqlalchemy.orm import relationship
 
@@ -104,6 +106,8 @@ class JavaCoverageRun(Base, BaseModel):
         index=True,
         comment="queued/running/completed/failed/cancelled/partial",
     )
+    commit_sha = Column(String(64), nullable=True, comment="触发时确定的 commit（下拉选择或分支 HEAD）")
+    source = Column(String(20), nullable=True, comment="采集来源 unittest/runtime")
     services_total = Column(Integer, nullable=False, default=0, comment="服务总数")
     services_completed = Column(Integer, nullable=False, default=0, comment="成功数")
     services_failed = Column(Integer, nullable=False, default=0, comment="失败数")
@@ -138,6 +142,8 @@ class JavaCoverageReport(Base, BaseModel):
     )
     service_name = Column(String(100), nullable=False, index=True, comment="服务名称")
     commit_sha = Column(String(64), nullable=True, comment="采集时的 commit SHA")
+    source = Column(String(20), nullable=True, comment="采集来源 unittest/runtime")
+    warnings = Column(JSON, nullable=True, comment='告警 {"mismatch_classes": [...]}，如部署包与平台编译 class 不一致')
     status = Column(
         String(20),
         nullable=False,
@@ -172,6 +178,7 @@ class JavaCoverageReport(Base, BaseModel):
     exec_file_path = Column(String(500), nullable=True, comment="MinIO 中的 .exec 文件路径")
     build_log_path = Column(String(500), nullable=True, comment="MinIO 中的构建日志路径")
     source_snapshot_path = Column(String(500), nullable=True, comment="MinIO 中的源码快照 zip 路径")
+    method_index_path = Column(String(500), nullable=True, comment="MinIO 中本 commit 的方法索引 JSON")
     error_message = Column(Text, nullable=True)
 
     run = relationship("JavaCoverageRun")
@@ -182,3 +189,95 @@ class JavaCoverageReport(Base, BaseModel):
             f"<JavaCoverageReport(id={self.id}, run_id={self.run_id}, "
             f"service={self.service_name}, status={self.status})>"
         )
+
+
+class CoverageLedger(Base, BaseModel):
+    """覆盖率累积账本头：一个 task+service 在一轮内的累积状态，始终对齐到 head_commit"""
+
+    __tablename__ = "coverage_ledgers"
+    __table_args__ = (
+        UniqueConstraint("task_id", "service_name", "round_no", name="uq_ledger_task_service_round"),
+        {"comment": "覆盖率累积账本表"},
+    )
+
+    task_id = Column(
+        BigInteger,
+        ForeignKey("coverage_tasks.id", ondelete="CASCADE"),
+        nullable=False,
+        index=True,
+        comment="所属任务ID",
+    )
+    service_name = Column(String(100), nullable=False, comment="服务名称")
+    branch = Column(String(100), nullable=False, comment="本轮绑定的分支，切换分支自动开新一轮")
+    round_no = Column(Integer, nullable=False, default=1, comment="轮次，从 1 开始")
+    is_active = Column(Boolean, nullable=False, default=True, comment="当前轮次，同一 task+service 仅一个 active")
+    head_commit = Column(String(64), nullable=True, comment="账本当前对齐的 commit")
+
+    line_rate = Column(Float, nullable=True, comment="累积行覆盖率 0-100")
+    branch_rate = Column(Float, nullable=True, comment="累积分支覆盖率 0-100")
+    lines_covered = Column(Integer, nullable=True)
+    lines_total = Column(Integer, nullable=True)
+    branches_covered = Column(Integer, nullable=True)
+    branches_total = Column(Integer, nullable=True)
+    source_stats = Column(JSON, nullable=True, comment='按来源统计 {"unittest_lines","runtime_lines","inherited_lines"}')
+
+    merged_exec_path = Column(String(500), nullable=True, comment="MinIO：本轮累积的 jacococli merge 结果")
+    method_index_path = Column(String(500), nullable=True, comment="MinIO：head_commit 的方法索引 JSON")
+    classfiles_path = Column(String(500), nullable=True, comment="MinIO：head_commit 编译出的 class 压缩包")
+    source_snapshot_path = Column(String(500), nullable=True, comment="MinIO：head_commit 的源码快照 zip")
+
+    task = relationship("CoverageTask")
+
+    def __repr__(self):
+        return (
+            f"<CoverageLedger(id={self.id}, task_id={self.task_id}, service={self.service_name}, "
+            f"round={self.round_no}, head={self.head_commit})>"
+        )
+
+
+class CoverageLedgerFile(Base, BaseModel):
+    """账本行级数据（按文件存）"""
+
+    __tablename__ = "coverage_ledger_files"
+    __table_args__ = {"comment": "覆盖率账本文件级行覆盖表"}
+
+    ledger_id = Column(
+        BigInteger,
+        ForeignKey("coverage_ledgers.id", ondelete="CASCADE"),
+        nullable=False,
+        index=True,
+        comment="所属账本ID",
+    )
+    file_path = Column(String(500), nullable=False, comment="JaCoCo key，如 com/example/Foo.java")
+    lines_json = Column(JSON, nullable=False, comment="{line_no: {ci,mi,cb,mb,status,sources}}")
+    lines_covered = Column(Integer, nullable=False, default=0)
+    lines_total = Column(Integer, nullable=False, default=0)
+
+
+class CoverageLedgerEvent(Base, BaseModel):
+    """账本合并记录"""
+
+    __tablename__ = "coverage_ledger_events"
+    __table_args__ = {"comment": "覆盖率账本合并事件表"}
+
+    ledger_id = Column(
+        BigInteger,
+        ForeignKey("coverage_ledgers.id", ondelete="CASCADE"),
+        nullable=False,
+        index=True,
+        comment="所属账本ID",
+    )
+    report_id = Column(BigInteger, nullable=True, comment="合并进来的采集结果")
+    source = Column(String(20), nullable=True, comment="unittest/runtime")
+    from_commit = Column(String(64), nullable=True, comment="迁移前 commit")
+    to_commit = Column(String(64), nullable=True, comment="迁移后 commit")
+    direction = Column(String(20), nullable=False, comment="init/same/forward/backward/diverged/new_round")
+    reason = Column(String(20), nullable=True, comment="new_round 时：branch_switch/manual")
+    mismatch_classes_json = Column(JSON, nullable=True, comment="本次 class 不一致的类")
+    methods_kept = Column(Integer, nullable=False, default=0)
+    methods_reset = Column(Integer, nullable=False, default=0)
+    methods_removed = Column(Integer, nullable=False, default=0)
+    methods_added = Column(Integer, nullable=False, default=0)
+    reset_methods_json = Column(JSON, nullable=True, comment="被清零方法 key 列表（需回归方法）")
+    line_rate_before = Column(Float, nullable=True)
+    line_rate_after = Column(Float, nullable=True)

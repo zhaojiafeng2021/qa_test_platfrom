@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import asyncio
+import re
 from pathlib import Path
 from typing import Any
 
@@ -39,6 +40,32 @@ async def _run_jacococli(args: list[str], cwd: Path, timeout: int = 600) -> tupl
     return proc.returncode or 0, output
 
 
+_MISMATCH_RE = re.compile(r"Execution data for class (\S+) does not match")
+
+
+def _to_unit_fqn(vm_name: str) -> str:
+    """VM 内部类名 → 方法单元 key 的类部分
+
+    com/example/Outer$Inner → com.example.Outer.Inner（与 JavaMethodParser 一致）；
+    匿名类 / lambda 归外层：com/example/Outer$1 → com.example.Outer
+    """
+    parts = vm_name.replace("/", ".").split("$")
+    kept = [parts[0]]
+    for p in parts[1:]:
+        if not p or p[0].isdigit():
+            break
+        kept.append(p)
+    return ".".join(kept)
+
+
+def parse_mismatch_classes(log: str) -> list[str]:
+    """从 jacococli report 输出中提取 class ID 不一致的类，返回去重排序的 FQN
+
+    结果可直接作为 LedgerMigrator.migrate 的 exclude_classes。
+    """
+    return sorted({_to_unit_fqn(m.group(1)) for m in _MISMATCH_RE.finditer(log or "")})
+
+
 class JaCoCoReportService:
     """生成 + 解析 + 上传 JaCoCo 报告"""
 
@@ -51,31 +78,61 @@ class JaCoCoReportService:
         classfiles_dir: Path,
         sourcefiles_dir: Path,
         output_dir: Path,
-    ) -> tuple[Path, Path]:
+    ) -> tuple[Path, Path, list[str]]:
         """调用 jacococli 生成 XML 和 HTML 报告
 
         Returns:
-            (xml_path, html_dir)
+            (xml_path, html_dir, mismatch_classes)
+            mismatch_classes：exec 中与 classfiles 的 class ID 不一致的类（FQN，`.` 分隔）
+        """
+        xml_path, log = await self.generate_report(
+            [exec_file], classfiles_dir, sourcefiles_dir, output_dir, html=True,
+        )
+        html_dir = output_dir / "html"
+        if not html_dir.exists():
+            raise ReportGenerateError(f"jacococli did not produce HTML at {html_dir}: {log}")
+        return xml_path, html_dir, parse_mismatch_classes(log)
+
+    async def generate_report(
+        self,
+        exec_files: list[Path],
+        classfiles_dir: Path,
+        sourcefiles_dir: Path,
+        output_dir: Path,
+        html: bool = False,
+    ) -> tuple[Path, str]:
+        """按指定 class 生成 XML（可选 HTML）报告；返回 (xml_path, jacococli 输出)
+
+        exec_files 可传多个，jacococli 会先合并再出报告（账本用 head commit 的 class 出累积报告）。
         """
         output_dir.mkdir(parents=True, exist_ok=True)
         xml_path = output_dir / "jacoco.xml"
-        html_dir = output_dir / "html"
 
         args = [
-            "report", str(exec_file),
+            "report", *[str(f) for f in exec_files],
             "--classfiles", str(classfiles_dir),
             "--sourcefiles", str(sourcefiles_dir),
             "--xml", str(xml_path),
-            "--html", str(html_dir),
         ]
+        if html:
+            args += ["--html", str(output_dir / "html")]
         code, log = await _run_jacococli(args, cwd=output_dir)
         if code != 0:
-            raise ReportGenerateError(f"jacococli failed: exit={code}, log={log}")
+            raise ReportGenerateError(f"jacococli report failed: exit={code}, log={log}")
         if not xml_path.exists():
             raise ReportGenerateError(f"jacococli did not produce XML at {xml_path}: {log}")
-        if not html_dir.exists():
-            raise ReportGenerateError(f"jacococli did not produce HTML at {html_dir}: {log}")
-        return xml_path, html_dir
+        return xml_path, log
+
+    async def merge_exec(self, exec_files: list[Path], dest_file: Path) -> Path:
+        """jacococli merge：同一 class ID 的探针按位或，结果精确"""
+        if not exec_files:
+            raise ReportGenerateError("merge_exec: no exec files")
+        dest_file.parent.mkdir(parents=True, exist_ok=True)
+        args = ["merge", *[str(f) for f in exec_files], "--destfile", str(dest_file)]
+        code, log = await _run_jacococli(args, cwd=dest_file.parent)
+        if code != 0 or not dest_file.exists():
+            raise ReportGenerateError(f"jacococli merge failed: exit={code}, log={log}")
+        return dest_file
 
     def parse_xml(self, xml_path: Path) -> dict[str, Any]:
         """解析 JaCoCo XML，返回 {overall, files}"""

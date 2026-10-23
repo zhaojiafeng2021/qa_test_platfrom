@@ -124,22 +124,42 @@ class JavaBuildService:
         repo_url: str,
         branch: str,
         workspace: Path,
-    ) -> tuple[Path, str]:
-        """克隆仓库到 workspace/repo；返回 (repo_dir, clone_log)"""
+        commit_sha: Optional[str] = None,
+    ) -> tuple[Path, str, Optional[str]]:
+        """克隆仓库到 workspace/repo，指定 commit 时 checkout 到该 commit。
+
+        Returns:
+            (repo_dir, clone_log, head_sha)；head_sha 保证与 commit_sha 一致
+        """
         repo_dir = workspace / "repo"
         if repo_dir.exists():
             shutil.rmtree(repo_dir)
         workspace.mkdir(parents=True, exist_ok=True)
 
+        # 指定 commit 时需要完整历史（commit 可能早于浅克隆深度）；blob:none 只按需拉取文件内容
+        clone_args = ["--filter=blob:none"] if commit_sha else ["--depth", "50"]
         code, log = await _run_cmd(
-            ["git", "clone", "--depth", "50", "--branch", branch, repo_url, "repo"],
+            ["git", "clone", *clone_args, "--branch", branch, "--", repo_url, "repo"],
             cwd=workspace,
             timeout=600,
             log_prefix="[clone]",
         )
         if code != 0:
             raise BuildError("clone", f"git clone failed: exit={code}", build_log=log)
-        return repo_dir, log
+
+        if commit_sha:
+            code, out = await _run_cmd(
+                ["git", "checkout", "--detach", commit_sha],
+                cwd=repo_dir, timeout=600, log_prefix="[checkout]",
+            )
+            log += f"\n\n===== CHECKOUT {commit_sha} =====\n\n{out}"
+            if code != 0:
+                raise BuildError("clone", f"git checkout {commit_sha} failed: exit={code}", build_log=log)
+
+        head_sha = await _get_commit_sha(repo_dir)
+        if commit_sha and (not head_sha or not head_sha.startswith(commit_sha.lower())):
+            raise BuildError("clone", f"HEAD {head_sha} 与指定 commit {commit_sha} 不一致", build_log=log)
+        return repo_dir, log, head_sha
 
     def _detect_build_tool(self, service_dir: Path) -> str:
         """检测 maven / gradle / unknown"""
@@ -156,6 +176,7 @@ class JavaBuildService:
         service: dict,
         repo_url: str,
         branch: str,
+        commit_sha: Optional[str] = None,
     ) -> BuildResult:
         """对单个服务执行完整构建流程
 
@@ -164,6 +185,7 @@ class JavaBuildService:
             service: {"name": "order-service", "path": "services/order", "module": "order"}
             repo_url: 仓库 URL（https）
             branch: 目标分支
+            commit_sha: 指定 commit（None 时用分支 HEAD）
 
         Returns:
             BuildResult
@@ -173,8 +195,7 @@ class JavaBuildService:
 
         # ─── 1. git clone ───
         logger.info(f"[{service_name}] Cloning {repo_url}#{branch}")
-        repo_dir, clone_log = await self.clone_repo(repo_url, branch, workspace)
-        commit_sha = await _get_commit_sha(repo_dir)
+        repo_dir, clone_log, commit_sha = await self.clone_repo(repo_url, branch, workspace, commit_sha)
 
         # ─── 2. 检测构建工具 ───
         service_dir = repo_dir / service["path"]
@@ -266,6 +287,7 @@ class JavaBuildService:
         service: dict,
         repo_url: str,
         branch: str,
+        commit_sha: Optional[str] = None,
     ) -> BuildResult:
         """运行时模式：clone + 只编译（不跑测试），产出 class/源码目录供 jacococli report 使用。
 
@@ -275,8 +297,7 @@ class JavaBuildService:
         service_name = service["name"]
         workspace = self._service_workspace(task_id, run_id, service_name)
 
-        repo_dir, clone_log = await self.clone_repo(repo_url, branch, workspace)
-        commit_sha = await _get_commit_sha(repo_dir)
+        repo_dir, clone_log, commit_sha = await self.clone_repo(repo_url, branch, workspace, commit_sha)
 
         service_dir = repo_dir / service["path"]
         if not service_dir.exists():

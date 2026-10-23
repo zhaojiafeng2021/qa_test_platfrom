@@ -249,6 +249,7 @@ class JavaCoverageReportRepository:
         build_log_path: Optional[str] = None,
         source_snapshot_path: Optional[str] = None,
         error_message: Optional[str] = None,
+        warnings: Optional[dict] = None,
     ) -> None:
         values: dict = {"status": status}
         for k, v in (
@@ -269,6 +270,7 @@ class JavaCoverageReportRepository:
             ("build_log_path", build_log_path),
             ("source_snapshot_path", source_snapshot_path),
             ("error_message", error_message),
+            ("warnings", warnings),
         ):
             if v is not None:
                 values[k] = v

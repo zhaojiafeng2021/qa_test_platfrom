@@ -52,6 +52,14 @@ export interface RepoService {
   build_tool: 'maven' | 'gradle'
 }
 
+export interface RepoCommit {
+  sha: string
+  short_sha: string
+  author: string
+  committed_at: string
+  subject: string
+}
+
 // ─── 采集模式 ───
 
 export type CollectionMode = 'unittest' | 'runtime'
@@ -121,6 +129,8 @@ export interface JavaCoverageRun {
   id: number
   task_id: number
   trigger_type: TriggerType
+  commit_sha?: string | null
+  source?: CollectionMode | null
   overall_status: RunStatus
   services_total: number
   services_completed: number
@@ -145,6 +155,9 @@ export interface JavaCoverageReport {
   task_id: number
   service_name: string
   commit_sha?: string
+  source?: CollectionMode | null
+  /** class 不一致等警告：mismatch_classes 为 exec 与当前编译 class 不一致的类 */
+  warnings?: { mismatch_classes?: string[] } | null
   status: ReportStatus
   progress: number
   stage: ProgressStage
@@ -163,6 +176,12 @@ export interface JavaCoverageReport {
   error_message?: string
   created_at: string
   updated_at: string
+}
+
+export interface TriggerPayload {
+  /** 只能来自 commits 下拉；不传后端取分支 HEAD */
+  commit_sha?: string
+  source?: CollectionMode
 }
 
 export interface TriggerResponse {
@@ -218,6 +237,104 @@ export interface DiffCoverage {
   lines_covered: number
   /** key 与 FileCoverageSummary.file_path 一致 */
   files: Record<string, DiffCoverageFile>
+}
+
+// ─── 累积账本 ───
+
+export type LineSource = 'unittest' | 'runtime' | 'inherited'
+export type LedgerDirection = 'init' | 'same' | 'forward' | 'backward' | 'diverged' | 'new_round'
+
+export interface LedgerSourceStats {
+  unittest_lines: number
+  runtime_lines: number
+  inherited_lines: number
+}
+
+export interface CoverageLedger {
+  id: number
+  task_id: number
+  service_name: string
+  branch: string
+  round_no: number
+  is_active: boolean
+  head_commit?: string | null
+  /** 0-100 */
+  line_rate?: number | null
+  branch_rate?: number | null
+  lines_covered?: number | null
+  lines_total?: number | null
+  branches_covered?: number | null
+  branches_total?: number | null
+  source_stats?: LedgerSourceStats | null
+  created_at: string
+  updated_at: string
+}
+
+export interface ServiceLedgers {
+  service_name: string
+  active: CoverageLedger | null
+  /** 新的在前 */
+  rounds: CoverageLedger[]
+  /** 任务分支与当前账本分支不同：下次采集自动开新一轮 */
+  branch_mismatch: boolean
+}
+
+export interface LedgerLineCoverage extends LineCoverage {
+  sources: LineSource[]
+}
+
+export interface LedgerFileContent {
+  file_path: string
+  head_commit?: string | null
+  source: string
+  source_available: boolean
+  line_coverage: LedgerLineCoverage[]
+}
+
+export interface LedgerDiffFile extends DiffCoverageFile {
+  changed_lines_inherited: number
+  changed_lines: { line_no: number; status: DiffLineStatus; sources: LineSource[] }[]
+}
+
+export interface LedgerDiffCoverage extends DiffCoverage {
+  lines_inherited: number
+  files: Record<string, LedgerDiffFile>
+}
+
+export interface CoverageLedgerEvent {
+  id: number
+  report_id?: number | null
+  source?: CollectionMode | null
+  from_commit?: string | null
+  to_commit?: string | null
+  direction: LedgerDirection
+  reason?: 'branch_switch' | 'manual' | null
+  mismatch_classes_json?: string[] | null
+  methods_kept: number
+  methods_reset: number
+  methods_removed: number
+  methods_added: number
+  reset_methods_json?: string[] | null
+  line_rate_before?: number | null
+  line_rate_after?: number | null
+  created_at: string
+}
+
+export interface RegressionMethod {
+  key: string
+  file_path: string
+  start?: number | null
+  end?: number | null
+  reset_at_commit?: string | null
+  executable_lines: number
+  covered_lines: number
+  recovered: boolean
+}
+
+export interface LedgerEvents {
+  events: CoverageLedgerEvent[]
+  /** 未恢复的在前 */
+  regression_methods: RegressionMethod[]
 }
 
 // ─── WebSocket 消息 ───

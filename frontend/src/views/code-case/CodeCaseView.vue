@@ -179,8 +179,8 @@
             </el-table-column>
             <el-table-column label="操作" width="140" fixed="right">
               <template #default="{ row }">
-                <el-button size="small" link type="primary" @click.stop="openDetail(row)">查看</el-button>
-                <el-button size="small" link type="success" @click.stop="executeSingle(row)">执行</el-button>
+                <el-button size="small" link type="primary" @click.stop="openDetail(row as CodeCaseListItem)">查看</el-button>
+                <el-button size="small" link type="success" @click.stop="executeSingle(row as CodeCaseListItem)">执行</el-button>
               </template>
             </el-table-column>
             <template #empty>
@@ -240,8 +240,8 @@
           </el-descriptions-item>
           <el-descriptions-item label="最近执行">
             <div v-if="detail.last_execution_id">
-              <el-tag :type="EXEC_STATUS_TYPES[batchResult?.items?.find((i: any) => i.id === detail.last_execution_id)?.status || ''] || 'info'" size="small">
-                {{ batchResult?.items?.find((i: any) => i.id === detail.last_execution_id)?.status || '-' }}
+              <el-tag :type="EXEC_STATUS_TYPES[batchResult?.items?.find((i: any) => i.id === detail!.last_execution_id)?.status || ''] || 'info'" size="small">
+                {{ batchResult?.items?.find((i: any) => i.id === detail!.last_execution_id)?.status || '-' }}
               </el-tag>
               <span v-if="detail.last_duration_ms" class="ms-gap">{{ detail.last_duration_ms }}ms</span>
               <el-button size="small" link type="primary" @click="viewExecutionDetail(detail.last_execution_id!)">查看结果</el-button>
@@ -536,6 +536,7 @@ async function scanCode() {
     ]
     if (r.restored) parts.push(`恢复 ${r.restored}`)
     if (r.deleted) parts.push(`失效 ${r.deleted}`)
+    if (r.skipped) parts.push(`跳过其他项目 ${r.skipped}`)
     if (r.modules_created) parts.push(`新增模块 ${r.modules_created}`)
     ElMessage.success(parts.join('，'))
     if (r.errors?.length) {

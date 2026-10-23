@@ -108,6 +108,8 @@ class ScanResult(BaseModel):
     restored: int = Field(0, description="恢复的用例数（文件重新出现）")
     deleted: int = Field(0, description="标记删除的用例数（文件已消失）")
     modules_created: int = Field(0, description="自动新增的模块数")
+    skipped: int = Field(0, description="按项目扫描时跳过的其他项目/全局用例数")
+    project_id: Optional[int] = Field(None, description="本次扫描限定的项目；为空表示全量扫描")
     errors: list[str] = Field(default_factory=list, description="解析错误")
 
 

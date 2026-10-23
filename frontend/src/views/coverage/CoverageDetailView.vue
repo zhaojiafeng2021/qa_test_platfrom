@@ -17,7 +17,7 @@
             type="primary"
             :icon="VideoPlay"
             :disabled="store.isRunning"
-            @click="handleTrigger"
+            @click="triggerVisible = true"
           >触发采集</el-button>
           <el-button
             v-if="canRun && store.isRunning"
@@ -49,6 +49,16 @@
           <el-descriptions-item label="最近失败">{{ task.last_failed_at ? formatTime(task.last_failed_at) : '—' }}</el-descriptions-item>
         </el-descriptions>
       </el-card>
+
+      <LedgerPanel
+        v-if="pid"
+        ref="ledgerPanel"
+        :project-id="pid"
+        :task="task"
+        :can-run="canRun"
+        :running="store.isRunning"
+        @view-code="goLedgerCode"
+      />
 
       <el-card v-if="task.current_run_id" class="progress-card" shadow="never">
         <template #header>
@@ -113,6 +123,16 @@
     <el-dialog v-model="logVisible" title="构建日志" width="70%">
       <pre class="build-log">{{ logContent }}</pre>
     </el-dialog>
+
+    <TriggerCollectDialog
+      v-if="task && pid"
+      v-model="triggerVisible"
+      :task="task"
+      :project-id="pid"
+      :mismatch-services="ledgerPanel?.mismatchServices ?? []"
+      :submitting="triggering"
+      @confirm="handleTrigger"
+    />
   </div>
 </template>
 
@@ -126,9 +146,11 @@ import { useProjectStore } from '@/stores/project'
 import { usePermission } from '@/composables/usePermission'
 import { getReportBuildLog, listRunReports } from '@/api/coverage'
 import { formatTime } from '@/utils/format'
-import type { JavaCoverageReport, JavaCoverageRun, TaskStatus } from '@/types/coverage'
+import type { JavaCoverageReport, JavaCoverageRun, TaskStatus, TriggerPayload } from '@/types/coverage'
 import ServiceProgressRow from './components/ServiceProgressRow.vue'
 import RunHistoryStrip from './components/RunHistoryStrip.vue'
+import LedgerPanel from './components/LedgerPanel.vue'
+import TriggerCollectDialog from './components/TriggerCollectDialog.vue'
 
 const route = useRoute()
 const router = useRouter()
@@ -144,6 +166,18 @@ const canRun = computed(() => hasPermission('coverage:run'))
 
 const logVisible = ref(false)
 const logContent = ref('')
+
+const triggerVisible = ref(false)
+const triggering = ref(false)
+const ledgerPanel = ref<InstanceType<typeof LedgerPanel> | null>(null)
+
+// 采集结束（运行中 → 非运行中）后账本已合并，刷新累积覆盖
+watch(
+  () => store.isRunning,
+  (now, before) => {
+    if (before && !now) void ledgerPanel.value?.reload()
+  },
+)
 
 const wsStateText = computed(() => {
   switch (store.wsState) {
@@ -186,14 +220,30 @@ function goBack(): void {
   router.push({ name: 'CoverageList' })
 }
 
-async function handleTrigger(): Promise<void> {
+async function handleTrigger(payload: TriggerPayload): Promise<void> {
   if (!pid.value) return
+  triggering.value = true
   try {
-    await store.trigger(pid.value, taskId.value)
+    await store.trigger(pid.value, taskId.value, payload)
+    triggerVisible.value = false
     ElMessage.success('已触发')
   } catch (e: any) {
-    ElMessage.error(e?.response?.data?.detail || '触发失败')
+    ElMessage.error(e?.response?.data?.message || e?.response?.data?.detail || '触发失败')
+  } finally {
+    triggering.value = false
   }
+}
+
+function goLedgerCode(ledgerId: number, path?: string, line?: number, end?: number): void {
+  router.push({
+    name: 'CoverageLedgerCode',
+    params: { taskId: taskId.value, ledgerId },
+    query: {
+      ...(path ? { path } : {}),
+      ...(line ? { line: String(line) } : {}),
+      ...(end ? { end: String(end) } : {}),
+    },
+  })
 }
 
 async function handleCancel(): Promise<void> {

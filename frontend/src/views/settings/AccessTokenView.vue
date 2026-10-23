@@ -20,7 +20,7 @@
       <el-table-column label="状态" width="100">
         <template #default="{ row }">
           <el-tag v-if="!row.is_active" type="info">已吊销</el-tag>
-          <el-tag v-else-if="isExpired(row)" type="danger">已过期</el-tag>
+          <el-tag v-else-if="isExpired(row as ApiTokenInfo)" type="danger">已过期</el-tag>
           <el-tag v-else type="success">有效</el-tag>
         </template>
       </el-table-column>
@@ -40,7 +40,7 @@
       </el-table-column>
       <el-table-column label="操作" width="100" fixed="right">
         <template #default="{ row }">
-          <el-popconfirm title="吊销后使用该令牌的调用将立即失效，确定吊销？" @confirm="revoke(row)">
+          <el-popconfirm title="吊销后使用该令牌的调用将立即失效，确定吊销？" @confirm="revoke(row as ApiTokenInfo)">
             <template #reference>
               <el-button type="danger" link :disabled="!row.is_active">吊销</el-button>
             </template>

@@ -16,9 +16,13 @@ import type {
 const BASE = '/code-cases'
 
 export const codeCaseApi = {
-  /** 扫描代码：解析 code_testcases 目录并同步入库，项目归属由 @case(project=) 自动解析 */
-  scan() {
-    return client.post(`${BASE}/scan`) as unknown as Promise<ScanResult>
+  /**
+   * 扫描代码：解析 code_testcases 目录并同步入库，项目归属由 @case(project=) 自动解析。
+   * 传 projectId 时只同步该项目的用例，其他项目/全局用例跳过；不传则全量扫描
+   */
+  scan(projectId?: number | null) {
+    const params = projectId != null ? { project_id: projectId } : undefined
+    return client.post(`${BASE}/scan`, null, { params }) as unknown as Promise<ScanResult>
   },
   /** 用例统计 */
   stats(projectId?: number | null) {

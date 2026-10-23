@@ -1,5 +1,8 @@
 // 代码用例类型定义
 
+/** el-tag 的 type 取值 */
+export type TagType = 'primary' | 'success' | 'warning' | 'info' | 'danger'
+
 export type CaseLevel = 'P0' | 'P1' | 'P2' | 'P3'
 export type CaseStatus = 'idle' | 'running' | 'passed' | 'failed'
 
@@ -10,7 +13,7 @@ export const LEVEL_LABELS: Record<CaseLevel, string> = {
   P3: 'P3',
 }
 
-export const LEVEL_TYPES: Record<CaseLevel, string> = {
+export const LEVEL_TYPES: Record<CaseLevel, TagType> = {
   P0: 'danger',
   P1: 'warning',
   P2: 'primary',
@@ -24,7 +27,7 @@ export const STATUS_LABELS: Record<CaseStatus, string> = {
   failed: '失败',
 }
 
-export const STATUS_TYPES: Record<CaseStatus, string> = {
+export const STATUS_TYPES: Record<CaseStatus, TagType> = {
   idle: 'info',
   running: 'warning',
   passed: 'success',
@@ -41,7 +44,7 @@ export const EXEC_STATUS_LABELS: Record<string, string> = {
   timeout: '超时',
 }
 
-export const EXEC_STATUS_TYPES: Record<string, string> = {
+export const EXEC_STATUS_TYPES: Record<string, TagType> = {
   pending: 'info',
   running: 'warning',
   passed: 'success',
@@ -119,6 +122,9 @@ export interface ScanResult {
   restored: number
   deleted: number
   modules_created: number
+  /** 按项目扫描时跳过的其他项目/全局用例数 */
+  skipped: number
+  project_id?: number | null
   errors: string[]
 }
 

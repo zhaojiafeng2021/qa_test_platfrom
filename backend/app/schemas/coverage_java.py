@@ -153,6 +153,8 @@ class JavaCoverageRun(BaseModel):
     id: int
     task_id: int
     trigger_type: TriggerType
+    commit_sha: Optional[str] = None
+    source: Optional[CollectionMode] = None
     overall_status: RunStatus
     services_total: int = 0
     services_completed: int = 0
@@ -174,6 +176,8 @@ class JavaCoverageReport(BaseModel):
     task_id: int
     service_name: str
     commit_sha: Optional[str] = None
+    source: Optional[CollectionMode] = None
+    warnings: Optional[dict[str, Any]] = None
     status: ReportStatus
     progress: int = Field(0, ge=0, le=100)
     stage: ProgressStage = "pending"
@@ -194,6 +198,15 @@ class JavaCoverageReport(BaseModel):
     updated_at: datetime
 
     model_config = {"from_attributes": True}
+
+
+class TriggerRequest(BaseModel):
+    """POST trigger 请求体（可省略）"""
+    commit_sha: Optional[str] = Field(
+        None, pattern=r"^[0-9a-fA-F]{7,40}$",
+        description="要采集的 commit，须属于任务分支；不传取分支 HEAD",
+    )
+    source: Optional[CollectionMode] = Field(None, description="采集来源，不传用任务的 collection_mode")
 
 
 class TriggerResponse(BaseModel):
@@ -312,3 +325,112 @@ class DiffCoverageResponse(BaseModel):
     lines_total: int = Field(..., description="变更的可执行行总数")
     lines_covered: int = Field(..., description="变更可执行行中已覆盖数")
     files: dict[str, DiffCoverageFile] = Field(default_factory=dict, description="按文件的增量覆盖")
+
+
+# ──────────────────────────────────────────────
+# 累积账本
+# ──────────────────────────────────────────────
+
+LineSource = Literal["unittest", "runtime", "inherited"]
+
+
+class LedgerSourceStats(BaseModel):
+    unittest_lines: int = 0
+    runtime_lines: int = 0
+    inherited_lines: int = 0
+
+
+class CoverageLedgerOut(BaseModel):
+    id: int
+    task_id: int
+    service_name: str
+    branch: str
+    round_no: int
+    is_active: bool
+    head_commit: Optional[str] = None
+    line_rate: Optional[float] = None
+    branch_rate: Optional[float] = None
+    lines_covered: Optional[int] = None
+    lines_total: Optional[int] = None
+    branches_covered: Optional[int] = None
+    branches_total: Optional[int] = None
+    source_stats: Optional[LedgerSourceStats] = None
+    created_at: datetime
+    updated_at: datetime
+
+    model_config = {"from_attributes": True}
+
+
+class ServiceLedgers(BaseModel):
+    """GET /coverage-tasks/{tid}/ledger 的单个服务"""
+    service_name: str
+    active: Optional[CoverageLedgerOut] = Field(None, description="当前轮次；尚未采集过为 null")
+    rounds: list[CoverageLedgerOut] = Field(default_factory=list, description="全部轮次，新的在前（旧轮次只读）")
+    branch_mismatch: bool = Field(False, description="任务分支与当前账本分支不同：下次采集将自动开新一轮")
+
+
+class LedgerLineCoverage(LineCoverage):
+    sources: list[LineSource] = Field(default_factory=list)
+
+
+class LedgerFileContent(BaseModel):
+    file_path: str
+    head_commit: Optional[str] = None
+    source: str
+    source_available: bool = True
+    line_coverage: list[LedgerLineCoverage]
+
+
+class LedgerDiffChangedLine(DiffCoverageChangedLine):
+    sources: list[LineSource] = Field(default_factory=list)
+
+
+class LedgerDiffFile(DiffCoverageFile):
+    changed_lines_inherited: int = Field(0, description="仅靠继承覆盖的变更行数")
+    changed_lines: list[LedgerDiffChangedLine]
+
+
+class LedgerDiffCoverageResponse(DiffCoverageResponse):
+    lines_inherited: int = Field(0, description="仅靠继承覆盖的变更可执行行数")
+    files: dict[str, LedgerDiffFile] = Field(default_factory=dict)
+
+
+class CoverageLedgerEventOut(BaseModel):
+    id: int
+    report_id: Optional[int] = None
+    source: Optional[CollectionMode] = None
+    from_commit: Optional[str] = None
+    to_commit: Optional[str] = None
+    direction: Literal["init", "same", "forward", "backward", "diverged", "new_round"]
+    reason: Optional[Literal["branch_switch", "manual"]] = None
+    mismatch_classes_json: Optional[list[str]] = None
+    methods_kept: int = 0
+    methods_reset: int = 0
+    methods_removed: int = 0
+    methods_added: int = 0
+    reset_methods_json: Optional[list[str]] = None
+    line_rate_before: Optional[float] = None
+    line_rate_after: Optional[float] = None
+    created_at: datetime
+
+    model_config = {"from_attributes": True}
+
+
+class RegressionMethod(BaseModel):
+    key: str = Field(..., description="方法 key：FQN#name(paramTypes)")
+    file_path: str
+    start: Optional[int] = None
+    end: Optional[int] = None
+    reset_at_commit: Optional[str] = Field(None, description="最近一次因代码变更被清零时的 commit")
+    executable_lines: int
+    covered_lines: int
+    recovered: bool = Field(..., description="清零后已被重新覆盖（至少一行）")
+
+
+class LedgerEventsResponse(BaseModel):
+    events: list[CoverageLedgerEventOut]
+    regression_methods: list[RegressionMethod] = Field(..., description="需回归方法，未恢复的在前")
+
+
+class NewRoundRequest(BaseModel):
+    service_name: Optional[str] = Field(None, max_length=100, description="只对该服务开新一轮；不传则全部服务")
