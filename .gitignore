@@ -36,3 +36,12 @@ code_testcases/
 .vscode/
 .DS_Store
 Thumbs.db
+
+# ===== 本地临时产物（不纳入仓库） =====
+.trae/*
+!.trae/documents/
+.trae-html-share-packages/
+dump.rdb
+backend/temp_*.json
+backend/temp_*.py
+账号密码本-手机版.html

@@ -32,7 +32,11 @@
             v-for="f in filteredFiles"
             :key="f.file_path"
             :class="['file-item', { active: f.file_path === selectedPath }]"
+            role="button"
+            tabindex="0"
             @click="selectFile(f.file_path)"
+            @keydown.enter="selectFile(f.file_path)"
+            @keydown.space.prevent="selectFile(f.file_path)"
           >
             <div class="file-name">{{ basename(f.file_path) }}</div>
             <div class="file-path">{{ dirname(f.file_path) }}</div>
